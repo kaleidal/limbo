@@ -74,6 +74,7 @@ export function ClipboardMonitor() {
 
     let completed = 0;
     const errors: string[] = [];
+    const warnings: string[] = [];
 
     for (const url of detectedUrls) {
       try {
@@ -87,7 +88,14 @@ export function ClipboardMonitor() {
             continue;
           }
         } else {
-          await window.limbo.startDownload(url);
+          const result = await window.limbo.startDownload(url, { useDebrid });
+          // Track debrid errors but still count as completed since download was attempted
+          if (result.debridError) {
+            warnings.push(result.debridError);
+          }
+          if (result.warning) {
+            warnings.push(result.warning);
+          }
         }
         completed++;
         setSuccessCount(completed);
@@ -122,15 +130,35 @@ export function ClipboardMonitor() {
         }, 100);
       }
       
-      // Hide after short delay on success
-      setTimeout(() => {
-        setIsVisible(false);
-        setDetectedUrls([]);
-      }, 1500);
+      // Show debrid warning if there were issues but downloads still started
+      if (warnings.length > 0 && errors.length === 0) {
+        // Show the first warning - these are non-fatal
+        setError(`⚠️ ${warnings[0]}`);
+        // Keep visible longer for warnings
+        setTimeout(() => {
+          setIsVisible(false);
+          setDetectedUrls([]);
+        }, 5000);
+      } else {
+        // Hide after short delay on success
+        setTimeout(() => {
+          setIsVisible(false);
+          setDetectedUrls([]);
+        }, 1500);
+      }
     }
 
     if (errors.length > 0) {
-      setError(`${errors.length} failed: ${errors[0]}`);
+      // Check if it's a file host issue
+      const isFileHostError = detectedUrls.some(url => 
+        /rapidgator|nitroflare|uploadgig|1fichier|mediafire|turbobit|katfile|filefactory/i.test(url)
+      );
+      
+      if (isFileHostError && !debridAvailable) {
+        setError("File host requires Debrid service. Configure in Settings → Debrid Service.");
+      } else {
+        setError(`${errors.length} failed: ${errors[0]}`);
+      }
     }
   };
 

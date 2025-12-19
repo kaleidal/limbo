@@ -26,7 +26,7 @@ export interface LimboAPI {
 
   // Downloads
   getDownloads: () => Promise<Download[]>;
-  startDownload: (url: string, filename?: string) => Promise<boolean>;
+  startDownload: (url: string, options?: { filename?: string; useDebrid?: boolean }) => Promise<{ success: boolean; debridError?: string; warning?: string }>;
   pauseDownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<void>;
   cancelDownload: (id: string) => Promise<Download[]>;
@@ -173,7 +173,7 @@ const api: LimboAPI = {
 
   // Downloads
   getDownloads: () => ipcRenderer.invoke("get-downloads"),
-  startDownload: (url, filename) => ipcRenderer.invoke("start-download", url, filename),
+  startDownload: (url, options) => ipcRenderer.invoke("start-download", url, options),
   pauseDownload: (id) => ipcRenderer.invoke("pause-download", id),
   resumeDownload: (id) => ipcRenderer.invoke("resume-download", id),
   cancelDownload: (id) => ipcRenderer.invoke("cancel-download", id),

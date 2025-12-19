@@ -17,6 +17,72 @@ function isExtractableArchive(filename) {
     const ext = path.extname(filename).toLowerCase();
     return ['.zip', '.rar', '.7z'].includes(ext);
 }
+function parseMultiPartArchive(filename) {
+    // Match patterns like: name.part1.rar, name.part01.rar, name.part001.rar
+    const multiPartMatch = filename.match(/^(.+)\.part(\d+)\.rar$/i);
+    if (multiPartMatch) {
+        return {
+            isMultiPart: true,
+            baseName: multiPartMatch[1],
+            partNumber: parseInt(multiPartMatch[2], 10),
+            isPart1: parseInt(multiPartMatch[2], 10) === 1,
+        };
+    }
+    // Match patterns like: name.r00, name.r01 (old-style multi-part RAR)
+    const oldStyleMatch = filename.match(/^(.+)\.r(\d{2,})$/i);
+    if (oldStyleMatch) {
+        return {
+            isMultiPart: true,
+            baseName: oldStyleMatch[1],
+            partNumber: parseInt(oldStyleMatch[2], 10) + 1, // r00 is part 1
+            isPart1: oldStyleMatch[2] === '00',
+        };
+    }
+    return { isMultiPart: false, baseName: filename, partNumber: 0, isPart1: false };
+}
+// Check if all parts of a multi-part archive are COMPLETED (not just present on disk)
+// This checks the downloads store to ensure all parts have finished downloading
+function areAllPartsCompleted(baseName, downloads) {
+    // Find all downloads that match this multi-part archive base name
+    const matchingDownloads = [];
+    for (const download of downloads) {
+        const info = parseMultiPartArchive(download.filename);
+        if (info.isMultiPart && info.baseName.toLowerCase() === baseName.toLowerCase()) {
+            matchingDownloads.push({
+                partNumber: info.partNumber,
+                path: download.path,
+                status: download.status,
+            });
+        }
+    }
+    if (matchingDownloads.length === 0) {
+        return { allCompleted: false, part1Path: null, totalParts: 0, completedParts: 0 };
+    }
+    // Count completed parts and find part1 path
+    let part1Path = null;
+    let completedCount = 0;
+    const maxPart = Math.max(...matchingDownloads.map(d => d.partNumber));
+    for (const download of matchingDownloads) {
+        if (download.status === "completed" || download.status === "extracting") {
+            completedCount++;
+        }
+        if (download.partNumber === 1) {
+            part1Path = download.path;
+        }
+    }
+    // Check if we have all parts from 1 to maxPart and all are completed
+    const partNumbers = matchingDownloads.map(d => d.partNumber).sort((a, b) => a - b);
+    const hasAllParts = partNumbers.length === maxPart && partNumbers[0] === 1 && partNumbers[partNumbers.length - 1] === maxPart;
+    const allAreCompleted = completedCount === matchingDownloads.length;
+    return {
+        allCompleted: hasAllParts && allAreCompleted && part1Path !== null,
+        part1Path,
+        totalParts: maxPart,
+        completedParts: completedCount,
+    };
+}
+// Track pending multi-part extractions to avoid duplicate extraction attempts
+const pendingMultiPartExtractions = new Set();
 // VPN detection - checks for common VPN network interface patterns
 function isVpnConnected() {
     try {
@@ -46,6 +112,112 @@ function isVpnConnected() {
 }
 if (process.platform === 'win32') {
     app.setAppUserModelId('al.kaleid.limbo');
+}
+const FILE_HOST_EXTRACTORS = [
+    {
+        name: "rapidgator",
+        pattern: /rapidgator\.net/i,
+        extract: (html, url) => {
+            // Look for the download button link or direct download URL
+            // Rapidgator uses JavaScript to reveal the link, but sometimes has a direct link
+            const directMatch = html.match(/var\s+download_url\s*=\s*['"]([^'"]+)['"]/i);
+            if (directMatch)
+                return directMatch[1];
+            // Check for the slow download form action
+            const formMatch = html.match(/<form[^>]*action=['"]([^'"]*download[^'"]*)['"]/i);
+            if (formMatch)
+                return formMatch[1];
+            return null;
+        }
+    },
+    {
+        name: "mediafire",
+        pattern: /mediafire\.com/i,
+        extract: (html) => {
+            // MediaFire has a direct download link in the page
+            const match = html.match(/href=['"]([^'"]*download[^'"]*\.mediafire\.com[^'"]+)['"]/i);
+            if (match)
+                return match[1];
+            // Alternative pattern
+            const altMatch = html.match(/aria-label=['"]Download file['"]\s+href=['"]([^'"]+)['"]/i);
+            if (altMatch)
+                return altMatch[1];
+            // Look for download button
+            const btnMatch = html.match(/id=['"]downloadButton['"]\s+href=['"]([^'"]+)['"]/i);
+            return btnMatch?.[1] || null;
+        }
+    },
+    {
+        name: "1fichier",
+        pattern: /1fichier\.com/i,
+        extract: (html) => {
+            // 1fichier shows a form, the link comes after clicking
+            const match = html.match(/href=['"]([^'"]+\.1fichier\.com\/[^'"]+)['"]/i);
+            return match?.[1] || null;
+        }
+    },
+    {
+        name: "uploadgig",
+        pattern: /uploadgig\.com/i,
+        extract: (html) => {
+            // UploadGig direct download link
+            const match = html.match(/href=['"]([^'"]*download[^'"]+uploadgig[^'"]+)['"]/i);
+            return match?.[1] || null;
+        }
+    },
+    {
+        name: "katfile",
+        pattern: /katfile\.com/i,
+        extract: (html) => {
+            const match = html.match(/href=['"]([^'"]*\.katfile\.com\/[a-zA-Z0-9]+\/[^'"]+)['"]/i);
+            return match?.[1] || null;
+        }
+    },
+    {
+        name: "nitroflare",
+        pattern: /nitroflare\.com/i,
+        extract: (html) => {
+            // Nitroflare embeds the link in JavaScript
+            const match = html.match(/https?:\/\/[a-z0-9]+\.nitroflare\.com\/[^\s'"<>]+/i);
+            return match?.[0] || null;
+        }
+    },
+];
+// Extract direct download link from file host page
+async function extractFileHostLink(url) {
+    const extractor = FILE_HOST_EXTRACTORS.find(e => e.pattern.test(url));
+    if (!extractor)
+        return null;
+    try {
+        console.log(`[FileHost] Fetching ${extractor.name} page: ${url}`);
+        const response = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            },
+        });
+        if (!response.ok) {
+            console.error(`[FileHost] Failed to fetch: ${response.status}`);
+            return null;
+        }
+        const html = await response.text();
+        const directLink = extractor.extract(html, url);
+        if (directLink) {
+            console.log(`[FileHost] Extracted link from ${extractor.name}: ${directLink}`);
+            return directLink;
+        }
+        console.log(`[FileHost] No direct link found in ${extractor.name} page`);
+        return null;
+    }
+    catch (err) {
+        console.error(`[FileHost] Error extracting from ${extractor.name}:`, err);
+        return null;
+    }
+}
+// Check if a URL is a file host landing page
+function isFileHostUrl(url) {
+    return FILE_HOST_EXTRACTORS.some(e => e.pattern.test(url));
 }
 function initAutoUpdater() {
     if (!app.isPackaged)
@@ -556,7 +728,27 @@ function createWindow() {
     const handleDownload = (event, item, webContents, existingDownloadId) => {
         const downloadId = existingDownloadId ?? uuidv4();
         const settings = store.get("settings");
-        const savePath = item.getSavePath() || path.join(settings.downloadPath, item.getFilename());
+        const filename = item.getFilename();
+        const mimeType = item.getMimeType();
+        const savePath = item.getSavePath() || path.join(settings.downloadPath, filename);
+        // Detect if we're downloading an HTML page instead of the actual file
+        // This happens when file hosts serve their landing page
+        const isHtmlDownload = mimeType === "text/html" ||
+            filename.endsWith(".html") ||
+            filename.endsWith(".htm");
+        if (isHtmlDownload && isFileHostUrl(item.getURL())) {
+            console.warn(`[Download] Received HTML from file host instead of file. Cancelling.`);
+            console.warn(`[Download] URL: ${item.getURL()}`);
+            console.warn(`[Download] Consider using a Debrid service for reliable file host downloads.`);
+            item.cancel();
+            // Notify user
+            mainWindow?.webContents.send("download-complete", {
+                id: downloadId,
+                status: "error",
+                error: "FILE_HOST_BLOCKED",
+            });
+            return;
+        }
         // Ensure download directory exists
         if (!fs.existsSync(settings.downloadPath)) {
             fs.mkdirSync(settings.downloadPath, { recursive: true });
@@ -566,7 +758,7 @@ function createWindow() {
         activeDownloads.set(downloadId, item);
         const download = {
             id: downloadId,
-            filename: item.getFilename(),
+            filename: filename,
             url: item.getURL(),
             path: savePath,
             size: item.getTotalBytes(),
@@ -602,8 +794,14 @@ function createWindow() {
             const downloads = store.get("downloads");
             const idx = downloads.findIndex((d) => d.id === downloadId);
             if (idx !== -1) {
+                const prevStatus = downloads[idx].status;
                 downloads[idx].downloaded = item.getReceivedBytes();
-                downloads[idx].status = state === "progressing" ? "downloading" : "paused";
+                // Electron's `state` can remain "progressing" even while the item is paused.
+                // Use `item.isPaused()` as the source of truth to avoid UI flipping back to "downloading".
+                downloads[idx].status = item.isPaused() ? "paused" : (state === "progressing" ? "downloading" : "paused");
+                if (prevStatus !== downloads[idx].status) {
+                    console.log(`[Download] ${downloadId} status changed: ${prevStatus} -> ${downloads[idx].status}`);
+                }
                 try {
                     const resumeData = item.getResumeData?.();
                     downloads[idx].resumeData = resumeData?.toString("base64");
@@ -640,68 +838,212 @@ function createWindow() {
                 // Add to library if completed
                 if (state === "completed") {
                     const filename = item.getFilename();
+                    const downloadDir = path.dirname(savePath);
+                    // Check if this is a multi-part archive
+                    const multiPartInfo = parseMultiPartArchive(filename);
                     // Auto-extract if it's an archive (runs in worker thread, non-blocking)
                     if (isExtractableArchive(filename)) {
-                        // Update status to extracting
-                        downloads[idx].status = "extracting";
-                        store.set("downloads", downloads);
-                        mainWindow?.webContents.send("download-progress", {
-                            id: downloadId,
-                            downloaded: item.getReceivedBytes(),
-                            total: item.getTotalBytes(),
-                            status: "extracting",
-                            extractProgress: 0,
-                            extractStatus: "Starting extraction...",
-                        });
-                        // Run extraction in worker thread
-                        autoExtractArchiveAsync(savePath, downloadId, (percent, status) => {
+                        // Handle multi-part archives specially
+                        if (multiPartInfo.isMultiPart) {
+                            console.log(`[Download] Multi-part archive detected: ${filename} (part ${multiPartInfo.partNumber})`);
+                            // Check if all parts are COMPLETED (not just present on disk)
+                            const currentDownloads = store.get("downloads");
+                            const partsCheck = areAllPartsCompleted(multiPartInfo.baseName, currentDownloads);
+                            console.log(`[Download] Parts status: ${partsCheck.completedParts}/${partsCheck.totalParts} completed`);
+                            if (!partsCheck.allCompleted) {
+                                console.log(`[Download] Waiting for other parts to complete...`);
+                                // Mark as completed but don't extract yet - wait for other parts
+                                mainWindow?.webContents.send("download-complete", {
+                                    id: downloadId,
+                                    status: "completed",
+                                });
+                                return; // Don't extract yet
+                            }
+                            // All parts completed - check if extraction is already in progress
+                            if (pendingMultiPartExtractions.has(multiPartInfo.baseName.toLowerCase())) {
+                                console.log(`[Download] Extraction already in progress for ${multiPartInfo.baseName}`);
+                                mainWindow?.webContents.send("download-complete", {
+                                    id: downloadId,
+                                    status: "completed",
+                                });
+                                return;
+                            }
+                            // Mark extraction as pending
+                            pendingMultiPartExtractions.add(multiPartInfo.baseName.toLowerCase());
+                            console.log(`[Download] All ${partsCheck.totalParts} parts completed! Starting extraction from: ${partsCheck.part1Path}`);
+                            // Use part1 path for extraction
+                            const extractPath = partsCheck.part1Path;
+                            // Update status to extracting for ALL parts so the UI doesn't show just the last-finished part as extracting.
+                            {
+                                const allDownloads = store.get("downloads");
+                                const related = allDownloads.filter((d) => {
+                                    const info = parseMultiPartArchive(d.filename);
+                                    return info.isMultiPart && info.baseName.toLowerCase() === multiPartInfo.baseName.toLowerCase();
+                                });
+                                for (const d of related) {
+                                    d.status = "extracting";
+                                    d.extractProgress = 0;
+                                    d.extractStatus = "Extracting multi-part archive...";
+                                }
+                                store.set("downloads", allDownloads);
+                                for (const d of related) {
+                                    mainWindow?.webContents.send("download-progress", {
+                                        id: d.id,
+                                        downloaded: d.downloaded,
+                                        total: d.size,
+                                        status: "extracting",
+                                        extractProgress: 0,
+                                        extractStatus: "Extracting multi-part archive...",
+                                    });
+                                }
+                            }
+                            // Run extraction on part1 (which will use other parts automatically)
+                            autoExtractArchiveAsync(extractPath, downloadId, (percent, status) => {
+                                // Mirror extraction progress across all parts
+                                const allDownloads = store.get("downloads");
+                                const related = allDownloads.filter((d) => {
+                                    const info = parseMultiPartArchive(d.filename);
+                                    return info.isMultiPart && info.baseName.toLowerCase() === multiPartInfo.baseName.toLowerCase();
+                                });
+                                for (const d of related) {
+                                    d.status = "extracting";
+                                    d.extractProgress = percent;
+                                    d.extractStatus = status;
+                                }
+                                store.set("downloads", allDownloads);
+                                for (const d of related) {
+                                    mainWindow?.webContents.send("download-progress", {
+                                        id: d.id,
+                                        downloaded: d.downloaded,
+                                        total: d.size,
+                                        status: "extracting",
+                                        extractProgress: percent,
+                                        extractStatus: status,
+                                    });
+                                }
+                            }, (extractedDir) => {
+                                pendingMultiPartExtractions.delete(multiPartInfo.baseName.toLowerCase());
+                                const downloads = store.get("downloads");
+                                let libraryPath = extractPath;
+                                let libraryName = multiPartInfo.baseName;
+                                if (extractedDir) {
+                                    libraryPath = extractedDir;
+                                    libraryName = path.basename(extractedDir);
+                                    // Delete all archive parts after successful extraction
+                                    try {
+                                        const files = fs.readdirSync(downloadDir);
+                                        for (const file of files) {
+                                            const info = parseMultiPartArchive(file);
+                                            if (info.isMultiPart && info.baseName.toLowerCase() === multiPartInfo.baseName.toLowerCase()) {
+                                                const filePath = path.join(downloadDir, file);
+                                                fs.unlinkSync(filePath);
+                                                console.log(`Deleted archive part: ${filePath}`);
+                                            }
+                                        }
+                                    }
+                                    catch (err) {
+                                        console.error(`Failed to delete archive parts:`, err);
+                                    }
+                                }
+                                // Update status back to completed for ALL parts.
+                                // Also normalize the display name / open-location target so parts don't look like separate items forever.
+                                const related = downloads.filter((d) => {
+                                    const info = parseMultiPartArchive(d.filename);
+                                    return info.isMultiPart && info.baseName.toLowerCase() === multiPartInfo.baseName.toLowerCase();
+                                });
+                                for (const d of related) {
+                                    d.status = "completed";
+                                    d.extractProgress = undefined;
+                                    d.extractStatus = undefined;
+                                    if (extractedDir) {
+                                        d.filename = libraryName;
+                                        d.path = libraryPath;
+                                    }
+                                }
+                                store.set("downloads", downloads);
+                                // Add to library with auto-detected category
+                                const library = store.get("library");
+                                library.push({
+                                    id: uuidv4(),
+                                    name: libraryName,
+                                    path: libraryPath,
+                                    size: item.getTotalBytes(),
+                                    dateAdded: new Date().toISOString(),
+                                    category: detectCategory(libraryPath),
+                                });
+                                store.set("library", library);
+                                mainWindow?.webContents.send("library-updated", library);
+                                for (const d of related) {
+                                    mainWindow?.webContents.send("download-complete", {
+                                        id: d.id,
+                                        status: "completed",
+                                    });
+                                }
+                            });
+                        }
+                        else {
+                            // Single-part archive - extract normally
+                            // Update status to extracting
+                            downloads[idx].status = "extracting";
+                            store.set("downloads", downloads);
                             mainWindow?.webContents.send("download-progress", {
                                 id: downloadId,
                                 downloaded: item.getReceivedBytes(),
                                 total: item.getTotalBytes(),
                                 status: "extracting",
-                                extractProgress: percent,
-                                extractStatus: status,
+                                extractProgress: 0,
+                                extractStatus: "Starting extraction...",
                             });
-                        }, (extractedDir) => {
-                            const downloads = store.get("downloads");
-                            const idx = downloads.findIndex((d) => d.id === downloadId);
-                            let libraryPath = savePath;
-                            let libraryName = filename;
-                            if (extractedDir) {
-                                libraryPath = extractedDir;
-                                libraryName = path.basename(extractedDir);
-                                // Delete the original archive
-                                try {
-                                    fs.unlinkSync(savePath);
-                                    console.log(`Deleted archive: ${savePath}`);
+                            // Run extraction in worker thread
+                            autoExtractArchiveAsync(savePath, downloadId, (percent, status) => {
+                                mainWindow?.webContents.send("download-progress", {
+                                    id: downloadId,
+                                    downloaded: item.getReceivedBytes(),
+                                    total: item.getTotalBytes(),
+                                    status: "extracting",
+                                    extractProgress: percent,
+                                    extractStatus: status,
+                                });
+                            }, (extractedDir) => {
+                                const downloads = store.get("downloads");
+                                const idx = downloads.findIndex((d) => d.id === downloadId);
+                                let libraryPath = savePath;
+                                let libraryName = filename;
+                                if (extractedDir) {
+                                    libraryPath = extractedDir;
+                                    libraryName = path.basename(extractedDir);
+                                    // Delete the original archive
+                                    try {
+                                        fs.unlinkSync(savePath);
+                                        console.log(`Deleted archive: ${savePath}`);
+                                    }
+                                    catch (err) {
+                                        console.error(`Failed to delete archive: ${savePath}`, err);
+                                    }
                                 }
-                                catch (err) {
-                                    console.error(`Failed to delete archive: ${savePath}`, err);
+                                // Update status back to completed
+                                if (idx !== -1) {
+                                    downloads[idx].status = "completed";
+                                    store.set("downloads", downloads);
                                 }
-                            }
-                            // Update status back to completed
-                            if (idx !== -1) {
-                                downloads[idx].status = "completed";
-                                store.set("downloads", downloads);
-                            }
-                            // Add to library with auto-detected category
-                            const library = store.get("library");
-                            library.push({
-                                id: uuidv4(),
-                                name: libraryName,
-                                path: libraryPath,
-                                size: item.getTotalBytes(),
-                                dateAdded: new Date().toISOString(),
-                                category: detectCategory(libraryPath),
+                                // Add to library with auto-detected category
+                                const library = store.get("library");
+                                library.push({
+                                    id: uuidv4(),
+                                    name: libraryName,
+                                    path: libraryPath,
+                                    size: item.getTotalBytes(),
+                                    dateAdded: new Date().toISOString(),
+                                    category: detectCategory(libraryPath),
+                                });
+                                store.set("library", library);
+                                mainWindow?.webContents.send("library-updated", library);
+                                mainWindow?.webContents.send("download-complete", {
+                                    id: downloadId,
+                                    status: "completed",
+                                });
                             });
-                            store.set("library", library);
-                            mainWindow?.webContents.send("library-updated", library);
-                            mainWindow?.webContents.send("download-complete", {
-                                id: downloadId,
-                                status: "completed",
-                            });
-                        });
+                        }
                     }
                     else {
                         // Not an archive, add directly to library with auto-detected category
@@ -1065,38 +1407,84 @@ ipcMain.handle("get-downloads", () => store.get("downloads"));
 ipcMain.handle("pause-download", (_, id) => {
     const item = activeDownloads.get(id);
     if (item) {
-        item.pause();
+        if (item.canResume()) {
+            item.pause();
+            console.log(`[Download] Paused download: ${id}`);
+        }
+        else {
+            console.warn(`[Download] Cannot pause download ${id} - server doesn't support resume`);
+            // Still try to pause anyway
+            item.pause();
+        }
+    }
+    else {
+        console.warn(`[Download] Cannot pause - download ${id} not found in active downloads`);
     }
 });
 ipcMain.handle("resume-download", async (_, id) => {
     // First, try to resume an active download
     const item = activeDownloads.get(id);
     if (item) {
-        item.resume();
+        if (item.isPaused()) {
+            item.resume();
+            console.log(`[Download] Resumed download: ${id}`);
+        }
+        else {
+            console.log(`[Download] Download ${id} is not paused, state: ${item.getState()}`);
+        }
         return;
     }
-    // If not in active downloads (app was restarted), re-initiate the download
+    console.log(`[Download] Download ${id} not in active downloads, checking store...`);
+    // If not in active downloads (app was restarted), try to resume with saved data
     const downloads = store.get("downloads");
     const download = downloads.find((d) => d.id === id);
-    if (download && download.url && (download.status === "paused" || download.status === "downloading")) {
-        // Re-initiate download to the same path using session
-        // The will-download handler will handle setting up the download
-        const ses = session.fromPartition("persist:limbo");
-        ses.downloadURL(download.url);
+    if (!download) {
+        console.warn(`[Download] Download ${id} not found in store`);
+        return;
     }
+    if (download.status !== "paused" && download.status !== "downloading") {
+        console.log(`[Download] Download ${id} status is ${download.status}, cannot resume`);
+        return;
+    }
+    // Try to resume with resume data if available
+    if (download.resumeData && download.path) {
+        console.log(`[Download] Attempting to resume download ${id} with resume data`);
+        try {
+            const ses = session.fromPartition("persist:limbo");
+            // Resume using the canResumeCallback pattern
+            ses.createInterruptedDownload({
+                path: download.path,
+                urlChain: [download.url],
+                offset: download.downloaded,
+                length: download.size,
+            });
+            return;
+        }
+        catch (err) {
+            console.error(`[Download] Failed to resume with resume data:`, err);
+        }
+    }
+    // Fall back to re-starting the download
+    console.log(`[Download] Re-starting download ${id} from URL`);
+    const ses = session.fromPartition("persist:limbo");
+    ses.downloadURL(download.url);
 });
 ipcMain.handle("pause-all-downloads", () => {
-    for (const [, item] of activeDownloads) {
+    console.log(`[Download] Pausing all downloads (${activeDownloads.size} active)`);
+    for (const [id, item] of activeDownloads) {
         if (!item.isPaused()) {
             item.pause();
+            console.log(`[Download] Paused: ${id}`);
         }
     }
 });
 ipcMain.handle("resume-all-downloads", async () => {
+    console.log(`[Download] Resuming all downloads`);
     // Resume active downloads
-    for (const [, item] of activeDownloads) {
+    for (const [id, item] of activeDownloads) {
         if (item.isPaused()) {
             item.resume();
+            console.log(`[Download] Resumed: ${id}`);
         }
     }
     // Also re-initiate any paused downloads that aren't in activeDownloads (after restart)
@@ -1104,6 +1492,7 @@ ipcMain.handle("resume-all-downloads", async () => {
     const ses = session.fromPartition("persist:limbo");
     for (const d of downloads) {
         if (d.status === "paused" && d.url && !activeDownloads.has(d.id)) {
+            console.log(`[Download] Re-starting paused download: ${d.id}`);
             ses.downloadURL(d.url);
         }
     }
@@ -1124,18 +1513,46 @@ ipcMain.handle("clear-completed-downloads", () => {
     return downloads;
 });
 // Start a manual download
-ipcMain.handle("start-download", async (_, url, filename) => {
+ipcMain.handle("start-download", async (_, url, options) => {
     const settings = store.get("settings");
-    // Check for debrid
-    if (settings.debrid.service && settings.debrid.apiKey) {
-        // Use debrid service to unrestrict the link
-        const unrestrictedUrl = await unrestrictLink(url, settings.debrid);
-        if (unrestrictedUrl) {
-            url = unrestrictedUrl;
+    let finalUrl = url;
+    let debridError;
+    let warning;
+    // Check for debrid first (premium, most reliable) - only if not explicitly disabled
+    const shouldUseDebrid = options?.useDebrid !== false && settings.debrid.service && settings.debrid.apiKey;
+    if (shouldUseDebrid) {
+        console.log(`[Download] Debrid configured (${settings.debrid.service}), attempting to unrestrict...`);
+        const result = await unrestrictLink(url, settings.debrid);
+        if (result.url) {
+            console.log(`[Download] Using debrid unrestricted URL`);
+            finalUrl = result.url;
+        }
+        else {
+            debridError = result.error;
+            console.warn(`[Download] Debrid failed: ${debridError}`);
         }
     }
-    mainWindow?.webContents.downloadURL(url);
-    return true;
+    else if (options?.useDebrid === false) {
+        console.log(`[Download] Debrid explicitly disabled for this download`);
+    }
+    else {
+        console.log(`[Download] No debrid configured. Service: ${settings.debrid.service}, API key set: ${!!settings.debrid.apiKey}`);
+    }
+    // If debrid didn't work and it's a file host, try to extract direct link
+    if (finalUrl === url && isFileHostUrl(url)) {
+        console.log("[Download] Attempting to extract direct link from file host...");
+        const extractedUrl = await extractFileHostLink(url);
+        if (extractedUrl) {
+            finalUrl = extractedUrl;
+        }
+        else {
+            // File host detected but couldn't extract - warn user but still try
+            warning = "File host detected - download may fail without Debrid.";
+            console.warn("[Download] Could not extract direct link from file host. Will attempt anyway.");
+        }
+    }
+    mainWindow?.webContents.downloadURL(finalUrl);
+    return { success: true, debridError, warning };
 });
 // Settings
 ipcMain.handle("get-settings", () => store.get("settings"));
@@ -1193,9 +1610,9 @@ ipcMain.handle("add-folder-to-library", async () => {
     }
     return null;
 });
-// Debrid helpers
 async function unrestrictLink(url, debrid) {
     try {
+        console.log(`[Debrid] Attempting to unrestrict link via ${debrid.service}: ${url}`);
         if (debrid.service === "realdebrid") {
             const response = await fetch("https://api.real-debrid.com/rest/1.0/unrestrict/link", {
                 method: "POST",
@@ -1206,18 +1623,68 @@ async function unrestrictLink(url, debrid) {
                 body: `link=${encodeURIComponent(url)}`,
             });
             const data = await response.json();
-            return data.download || null;
+            if (data.error) {
+                console.error(`[Debrid] Real-Debrid error: ${data.error} (code: ${data.error_code})`);
+                // Provide user-friendly error messages
+                let friendlyError = data.error;
+                if (data.error.startsWith("ip_not_allowed")) {
+                    friendlyError = "Real-Debrid: IP not allowed. Regenerate API key from current IP or disable VPN.";
+                }
+                else if (data.error === "hoster_unavailable") {
+                    friendlyError = "Real-Debrid: This file host is not supported.";
+                }
+                else if (data.error === "link_host_not_supported") {
+                    friendlyError = "Real-Debrid: This file host is not supported.";
+                }
+                return { url: null, error: friendlyError };
+            }
+            if (data.download) {
+                console.log(`[Debrid] Successfully unrestricted link via Real-Debrid`);
+                return { url: data.download };
+            }
+            console.warn(`[Debrid] Real-Debrid returned no download link. Response:`, data);
+            return { url: null, error: "Real-Debrid: No download link returned." };
         }
         else if (debrid.service === "alldebrid") {
             const response = await fetch(`https://api.alldebrid.com/v4/link/unlock?agent=limbo&apikey=${debrid.apiKey}&link=${encodeURIComponent(url)}`);
             const data = await response.json();
-            return data.data?.link || null;
+            if (data.status === "error" || data.error) {
+                const errMsg = data.error?.message || data.error || 'Unknown error';
+                console.error(`[Debrid] AllDebrid error: ${errMsg}`);
+                return { url: null, error: `AllDebrid: ${errMsg}` };
+            }
+            if (data.data?.link) {
+                console.log(`[Debrid] Successfully unrestricted link via AllDebrid`);
+                return { url: data.data.link };
+            }
+            console.warn(`[Debrid] AllDebrid returned no download link. Response:`, data);
+            return { url: null, error: "AllDebrid: No download link returned." };
         }
+        else if (debrid.service === "premiumize") {
+            const response = await fetch(`https://www.premiumize.me/api/transfer/directdl?apikey=${debrid.apiKey}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `src=${encodeURIComponent(url)}`,
+            });
+            const data = await response.json();
+            if (data.status !== "success") {
+                console.error(`[Debrid] Premiumize error: ${data.message || 'Unknown error'}`);
+                return { url: null, error: `Premiumize: ${data.message || 'Unknown error'}` };
+            }
+            if (data.content?.[0]?.link) {
+                console.log(`[Debrid] Successfully unrestricted link via Premiumize`);
+                return { url: data.content[0].link };
+            }
+            console.warn(`[Debrid] Premiumize returned no download link. Response:`, data);
+            return { url: null, error: "Premiumize: No download link returned." };
+        }
+        console.warn(`[Debrid] Unknown debrid service: ${debrid.service}`);
+        return { url: null, error: `Unknown debrid service: ${debrid.service}` };
     }
     catch (err) {
-        console.error("Debrid error:", err);
+        console.error("[Debrid] Error unrestricting link:", err);
+        return { url: null, error: `Debrid error: ${err}` };
     }
-    return null;
 }
 // Debrid magnet link conversion
 async function convertMagnetWithDebrid(magnetUri, debrid) {
@@ -1256,9 +1723,9 @@ async function convertMagnetWithDebrid(magnetUri, debrid) {
                 // Unrestrict each link
                 const unrestrictedLinks = [];
                 for (const link of infoData.links) {
-                    const unrestricted = await unrestrictLink(link, debrid);
-                    if (unrestricted)
-                        unrestrictedLinks.push(unrestricted);
+                    const result = await unrestrictLink(link, debrid);
+                    if (result.url)
+                        unrestrictedLinks.push(result.url);
                 }
                 return unrestrictedLinks.length > 0 ? unrestrictedLinks : null;
             }

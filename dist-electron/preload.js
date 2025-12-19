@@ -23,7 +23,7 @@ const api = {
     addFolderToLibrary: () => electron_1.ipcRenderer.invoke("add-folder-to-library"),
     // Downloads
     getDownloads: () => electron_1.ipcRenderer.invoke("get-downloads"),
-    startDownload: (url, filename) => electron_1.ipcRenderer.invoke("start-download", url, filename),
+    startDownload: (url, options) => electron_1.ipcRenderer.invoke("start-download", url, options),
     pauseDownload: (id) => electron_1.ipcRenderer.invoke("pause-download", id),
     resumeDownload: (id) => electron_1.ipcRenderer.invoke("resume-download", id),
     cancelDownload: (id) => electron_1.ipcRenderer.invoke("cancel-download", id),

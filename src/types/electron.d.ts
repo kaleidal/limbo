@@ -121,7 +121,7 @@ export interface LimboAPI {
 
   // Downloads
   getDownloads: () => Promise<Download[]>;
-  startDownload: (url: string, filename?: string) => Promise<boolean>;
+  startDownload: (url: string, options?: { filename?: string; useDebrid?: boolean }) => Promise<{ success: boolean; debridError?: string; warning?: string }>;
   pauseDownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<void>;
   cancelDownload: (id: string) => Promise<Download[]>;

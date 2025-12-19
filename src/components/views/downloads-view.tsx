@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import type { TorrentInfo } from "@/types/electron.d";
 
 export function DownloadsView() {
-  const { downloads, torrents, setTorrents, updateTorrent } = useAppStore();
+  const { downloads, torrents, setTorrents, updateTorrent, updateDownload } = useAppStore();
   const [activeTab, setActiveTab] = useState<"downloads" | "torrents">("downloads");
   const [urlInput, setUrlInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
@@ -131,12 +131,16 @@ export function DownloadsView() {
 
   const handlePause = async (id: string) => {
     if (window.limbo) {
+      // Optimistic UI update
+      updateDownload(id, { status: "paused" });
       await window.limbo.pauseDownload(id);
     }
   };
 
   const handleResume = async (id: string) => {
     if (window.limbo) {
+      // Optimistic UI update
+      updateDownload(id, { status: "downloading" });
       await window.limbo.resumeDownload(id);
     }
   };
@@ -187,30 +191,42 @@ export function DownloadsView() {
   const handlePauseAll = async () => {
     if (!window.limbo) return;
     if (activeTab === "downloads") {
+      // Optimistic UI update for downloads
+      downloads.forEach(d => {
+        if (d.status === "downloading") {
+          updateDownload(d.id, { status: "paused" });
+        }
+      });
       await window.limbo.pauseAllDownloads();
     } else {
-      await window.limbo.pauseAllTorrents();
-      // Update local state
+      // Update local state for torrents
       torrents.forEach(t => {
         if (t.status === "downloading") {
           updateTorrent(t.id, { status: "paused" });
         }
       });
+      await window.limbo.pauseAllTorrents();
     }
   };
 
   const handleResumeAll = async () => {
     if (!window.limbo) return;
     if (activeTab === "downloads") {
+      // Optimistic UI update for downloads
+      downloads.forEach(d => {
+        if (d.status === "paused") {
+          updateDownload(d.id, { status: "downloading" });
+        }
+      });
       await window.limbo.resumeAllDownloads();
     } else {
-      await window.limbo.resumeAllTorrents();
-      // Update local state
+      // Update local state for torrents
       torrents.forEach(t => {
         if (t.status === "paused") {
           updateTorrent(t.id, { status: "downloading" });
         }
       });
+      await window.limbo.resumeAllTorrents();
     }
   };
 
@@ -485,6 +501,15 @@ function DownloadItem({
   getStatusIcon: (status: string) => React.ReactNode;
 }) {
   const progress = getProgress(download.downloaded, download.size);
+
+  const displayFilename = (() => {
+    const name = String(download.filename || "");
+    const partMatch = name.match(/^(.+)\.part\d+\.rar$/i);
+    if (partMatch) return `${partMatch[1]}.rar`;
+    const oldStyleMatch = name.match(/^(.+)\.r\d{2,}$/i);
+    if (oldStyleMatch) return `${oldStyleMatch[1]}.rar`;
+    return name;
+  })();
   
   // Calculate speed and ETA - show 0 when paused
   const speed = download.status === "paused" ? 0 : (download.speed || 0);
@@ -496,8 +521,8 @@ function DownloadItem({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3 flex-1 min-w-0">
           {getStatusIcon(download.status)}
-          <span className="font-medium truncate" title={download.filename}>
-            {download.filename}
+          <span className="font-medium truncate" title={displayFilename}>
+            {displayFilename}
           </span>
         </div>
         <div className="flex items-center gap-2">
