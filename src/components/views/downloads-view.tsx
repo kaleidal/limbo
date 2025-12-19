@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAppStore } from "@/store/app-store";
 import {
   Download,
@@ -28,6 +28,18 @@ export function DownloadsView() {
   const [activeTab, setActiveTab] = useState<"downloads" | "torrents">("downloads");
   const [urlInput, setUrlInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+
+  // Listen for switch-to-torrents event from clipboard monitor
+  useEffect(() => {
+    const handleSwitchToTorrents = () => {
+      setActiveTab("torrents");
+    };
+    
+    window.addEventListener("switch-to-torrents", handleSwitchToTorrents);
+    return () => {
+      window.removeEventListener("switch-to-torrents", handleSwitchToTorrents);
+    };
+  }, []);
 
   const formatSize = (bytes: number) => {
     if (bytes === 0) return "0 B";

@@ -205,6 +205,38 @@ const gotTheLock = app.requestSingleInstanceLock();
 let pendingMagnetLink: string | null = null;
 let pendingTorrentFile: string | null = null;
 
+function normalizeCliArg(arg: string): string {
+  let value = arg.trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+  if (value.startsWith('file://')) {
+    try {
+      value = decodeURIComponent(value.replace('file://', ''));
+    } catch {
+      value = value.replace('file://', '');
+    }
+  }
+  return value;
+}
+
+function findTorrentFileArg(args: string[]): string | null {
+  for (const raw of args) {
+    const arg = normalizeCliArg(raw);
+    if (!arg) continue;
+    if (arg.toLowerCase().endsWith('.torrent') && fs.existsSync(arg)) return arg;
+  }
+  return null;
+}
+
+function findMagnetArg(args: string[]): string | null {
+  for (const raw of args) {
+    const arg = normalizeCliArg(raw);
+    if (arg.startsWith('magnet:')) return arg;
+  }
+  return null;
+}
+
 if (!gotTheLock) {
   app.quit();
 } else {
@@ -214,17 +246,11 @@ if (!gotTheLock) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
       
-      // Check if a magnet link was passed
-      const magnetArg = commandLine.find(arg => arg.startsWith('magnet:'));
-      if (magnetArg) {
-        mainWindow.webContents.send('magnet-link-opened', magnetArg);
-      }
-      
-      // Check if a .torrent file was passed
-      const torrentFile = commandLine.find(arg => arg.endsWith('.torrent'));
-      if (torrentFile && fs.existsSync(torrentFile)) {
-        mainWindow.webContents.send('torrent-file-opened', torrentFile);
-      }
+      const magnetArg = findMagnetArg(commandLine);
+      if (magnetArg) mainWindow.webContents.send('magnet-link-opened', magnetArg);
+
+      const torrentFile = findTorrentFileArg(commandLine);
+      if (torrentFile) mainWindow.webContents.send('torrent-file-opened', torrentFile);
     }
   });
 }
@@ -234,87 +260,80 @@ let lastClipboardContent = '';
 let clipboardWatcher: ReturnType<typeof setInterval> | null = null;
 
 // WebTorrent for full BitTorrent support (TCP/UDP + WebRTC since v2.3.0)
-let torrentClient: any = null;
-let streamServer: http.Server | null = null;
+let torrentWorker: Worker | null = null;
+let torrentWorkerReady = false;
 let streamServerPort: number = 0;
+const activeTorrentIds = new Set<string>();
+const pendingTorrentWorkerRequests = new Map<
+  string,
+  { resolve: (value: any) => void; reject: (reason?: any) => void; timeout: NodeJS.Timeout }
+>();
+
+// Public trackers to help with peer discovery
+const publicTrackers = [
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://open.demonii.com:1337/announce',
+  'udp://tracker.openbittorrent.com:6969/announce',
+  'udp://exodus.desync.com:6969/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://open.stealth.si:80/announce',
+  'udp://tracker.moeking.me:6969/announce',
+  'wss://tracker.btorrent.xyz',
+  'wss://tracker.openwebtorrent.com',
+];
 
 // Function to initialize WebTorrent with streaming server
 async function initWebTorrent() {
   try {
-    // WebTorrent 2.3.0+ has native TCP/UDP + WebRTC support built-in
-    const WebTorrent = await import("webtorrent");
-    torrentClient = new WebTorrent.default();
-    console.log("WebTorrent loaded successfully (v2.3.0+ with native TCP/UDP support)");
+    const workerPath = path.join(__dirname, "torrent-worker.js");
+    torrentWorker = new Worker(workerPath);
 
-    // Create HTTP streaming server for media files
-    streamServer = http.createServer((req, res) => {
-      const match = req.url?.match(/^\/stream\/([0-9a-f]{40})(?:\/(.*))?$/);
-      if (!match) {
-        res.statusCode = 404;
-        return res.end('Not found');
+    torrentWorker.on("message", (msg: any) => {
+      if (!msg || typeof msg !== "object") return;
+
+      if (msg.type === "ready") {
+        torrentWorkerReady = !!msg.ok;
+        if (msg.ok) {
+          streamServerPort = msg.streamServerPort || 0;
+          console.log(`Torrent worker ready. Stream server on http://127.0.0.1:${streamServerPort}`);
+        } else {
+          console.warn("Torrent worker failed to initialize.", msg.error);
+        }
+        return;
       }
 
-      const infoHash = match[1];
-      const fileName = match[2] ? decodeURIComponent(match[2]) : null;
-      const torrent = torrentClient?.get(infoHash);
-      
-      if (!torrent) {
-        res.statusCode = 404;
-        return res.end('Torrent not found');
+      if (msg.type === "response" && typeof msg.requestId === "string") {
+        const pending = pendingTorrentWorkerRequests.get(msg.requestId);
+        if (!pending) return;
+        clearTimeout(pending.timeout);
+        pendingTorrentWorkerRequests.delete(msg.requestId);
+        if (msg.ok) pending.resolve(msg.data);
+        else pending.reject(new Error(msg.error || "Torrent worker request failed"));
+        return;
       }
 
-      // Find the requested file or largest video file
-      let file = fileName 
-        ? torrent.files.find((f: any) => f.name === fileName)
-        : torrent.files.find((f: any) => f.name.match(/\.(mp4|mkv|avi|mov|webm)$/i));
-      
-      if (!file) {
-        file = torrent.files[0]; // Fallback to first file
-      }
-      
-      if (!file) {
-        res.statusCode = 404;
-        return res.end('No file found');
-      }
-
-      // Handle range requests for seeking
-      const range = req.headers.range;
-      const fileSize = file.length;
-
-      if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunkSize = end - start + 1;
-
-        res.writeHead(206, {
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunkSize,
-          'Content-Type': getMimeType(file.name),
-        });
-
-        const stream = file.createReadStream({ start, end });
-        stream.pipe(res);
-      } else {
-        res.writeHead(200, {
-          'Content-Length': fileSize,
-          'Content-Type': getMimeType(file.name),
-        });
-        file.createReadStream().pipe(res);
+      if (msg.type === "event") {
+        handleTorrentWorkerEvent(msg.event, msg.payload);
       }
     });
 
-    streamServer.listen(0, '127.0.0.1', () => {
-      const addr = streamServer?.address();
-      if (addr && typeof addr === 'object') {
-        streamServerPort = addr.port;
-        console.log(`Torrent stream server running on http://127.0.0.1:${streamServerPort}`);
-      }
+    torrentWorker.on("error", (err) => {
+      console.warn("Torrent worker error", err);
+      torrentWorkerReady = false;
     });
 
+    torrentWorker.on("exit", (code) => {
+      console.warn("Torrent worker exited", code);
+      torrentWorkerReady = false;
+      torrentWorker = null;
+    });
+
+    const settings = store.get("settings");
+    torrentWorker.postMessage({ type: "init", enableSeeding: settings.enableSeeding, publicTrackers });
   } catch (err) {
-    console.warn("WebTorrent failed to load. Torrent support disabled.", err);
+    console.warn("Torrent worker failed to start. Torrent support disabled.", err);
+    torrentWorkerReady = false;
+    torrentWorker = null;
   }
 }
 
@@ -340,6 +359,117 @@ function getMimeType(filename: string): string {
     '.rar': 'application/x-rar-compressed',
   };
   return mimeTypes[ext] || 'application/octet-stream';
+}
+
+function callTorrentWorker<T = any>(message: any, timeoutMs = 20000): Promise<T> {
+  if (!torrentWorker || !torrentWorkerReady) {
+    return Promise.reject(new Error("Torrent support is not available."));
+  }
+
+  const requestId = uuidv4();
+  const payload = { ...message, requestId };
+
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingTorrentWorkerRequests.delete(requestId);
+      reject(new Error("Torrent worker request timed out"));
+    }, timeoutMs);
+
+    pendingTorrentWorkerRequests.set(requestId, { resolve, reject, timeout });
+    torrentWorker!.postMessage(payload);
+  });
+}
+
+function handleTorrentWorkerEvent(event: string, payload: any) {
+  if (!payload || typeof payload !== "object") return;
+
+  if (event === "torrent-metadata") {
+    const torrents = store.get("torrents");
+    const idx = torrents.findIndex((t: any) => t.id === payload.id);
+    if (idx !== -1) {
+      const settings = store.get("settings");
+      const realName = payload.name || torrents[idx].name;
+      torrents[idx] = {
+        ...torrents[idx],
+        name: realName,
+        size: payload.size || torrents[idx].size,
+        magnetUri: payload.magnetUri || torrents[idx].magnetUri,
+        infoHash: payload.infoHash || torrents[idx].infoHash,
+        path: path.join(settings.downloadPath, realName),
+      };
+      store.set("torrents", torrents);
+      mainWindow?.webContents.send("torrent-progress", torrents[idx]);
+    }
+    return;
+  }
+
+  if (event === "torrent-progress") {
+    const torrents = store.get("torrents");
+    const idx = torrents.findIndex((t: any) => t.id === payload.id);
+    if (idx === -1) return;
+
+    const settings = store.get("settings");
+    torrents[idx] = {
+      ...torrents[idx],
+      downloaded: payload.downloaded || 0,
+      uploaded: settings.enableSeeding ? (payload.uploaded || 0) : 0,
+      progress: payload.progress || 0,
+      downloadSpeed: payload.downloadSpeed || 0,
+      uploadSpeed: settings.enableSeeding ? (payload.uploadSpeed || 0) : 0,
+      peers: payload.peers || 0,
+      seeds: payload.seeds || 0,
+      status: payload.done
+        ? "completed"
+        : torrents[idx].status === "paused"
+          ? "paused"
+          : "downloading",
+    };
+    store.set("torrents", torrents);
+    mainWindow?.webContents.send("torrent-progress", torrents[idx]);
+    return;
+  }
+
+  if (event === "torrent-done") {
+    const torrents = store.get("torrents");
+    const idx = torrents.findIndex((t: any) => t.id === payload.id);
+    if (idx !== -1) {
+      const settings = store.get("settings");
+      torrents[idx].progress = 1;
+      torrents[idx].status = settings.enableSeeding ? "seeding" : "completed";
+      if (!settings.enableSeeding) {
+        torrents[idx].uploaded = 0;
+        torrents[idx].uploadSpeed = 0;
+        activeTorrentIds.delete(payload.id);
+      }
+      store.set("torrents", torrents);
+
+      // Add to library
+      const library = store.get("library");
+      const finalPath = torrents[idx].path;
+      library.push({
+        id: uuidv4(),
+        name: torrents[idx].name,
+        path: finalPath,
+        size: torrents[idx].size,
+        dateAdded: new Date().toISOString(),
+        category: detectCategory(finalPath),
+      });
+      store.set("library", library);
+      mainWindow?.webContents.send("library-updated", library);
+      mainWindow?.webContents.send("torrent-complete", torrents[idx]);
+    }
+    return;
+  }
+
+  if (event === "torrent-error") {
+    const torrents = store.get("torrents");
+    const idx = torrents.findIndex((t: any) => t.id === payload.id);
+    if (idx !== -1) {
+      torrents[idx].status = "error";
+      store.set("torrents", torrents);
+    }
+    mainWindow?.webContents.send("torrent-error", { id: payload.id, error: payload.error || "Torrent error" });
+  }
 }
 
 // Types
@@ -413,6 +543,7 @@ interface StoreSchema {
     downloadPath: string;
     maxConcurrentDownloads: number;
     hardwareAcceleration: boolean;
+    enableSeeding: boolean;
     debrid: DebridConfig;
   };
 }
@@ -440,6 +571,7 @@ const store = new Store<StoreSchema>({
       downloadPath: path.join(app.getPath("downloads"), "Limbo"),
       maxConcurrentDownloads: 3,
       hardwareAcceleration: true,
+      enableSeeding: false,
       debrid: {
         service: null,
         apiKey: "",
@@ -450,7 +582,6 @@ const store = new Store<StoreSchema>({
 
 let mainWindow: BrowserWindow | null = null;
 const activeDownloads = new Map<string, DownloadItem>();
-const activeTorrents = new Map<string, any>();
 
 function createWindow() {
   // Use PNG icon for all platforms (electron-builder will convert for production)
@@ -782,16 +913,11 @@ app.whenReady().then(async () => {
   });
   
   // Check command line args for initial launch with .torrent file
-  const torrentArg = process.argv.find(arg => arg.endsWith('.torrent'));
-  if (torrentArg && fs.existsSync(torrentArg)) {
-    pendingTorrentFile = torrentArg;
-  }
-  
-  // Check command line args for initial launch with magnet link
-  const magnetArg = process.argv.find(arg => arg.startsWith('magnet:'));
-  if (magnetArg) {
-    pendingMagnetLink = magnetArg;
-  }
+  const torrentArg = findTorrentFileArg(process.argv);
+  if (torrentArg) pendingTorrentFile = torrentArg;
+
+  const magnetArg = findMagnetArg(process.argv);
+  if (magnetArg) pendingMagnetLink = magnetArg;
 });
 
 app.on("window-all-closed", () => {
@@ -957,6 +1083,13 @@ ipcMain.handle("update-settings", (_, settings: Partial<StoreSchema["settings"]>
   const current = store.get("settings");
   const updated = { ...current, ...settings };
   store.set("settings", updated);
+
+  if (typeof settings.enableSeeding === "boolean" && settings.enableSeeding !== current.enableSeeding) {
+    try {
+      torrentWorker?.postMessage({ type: "set-seeding", enableSeeding: updated.enableSeeding });
+    } catch {}
+  }
+
   return updated;
 });
 ipcMain.handle("select-download-path", async () => {
@@ -1174,12 +1307,20 @@ function getFolderSize(folderPath: string): number {
 
 // Torrent handlers
 ipcMain.handle("get-torrents", () => store.get("torrents"));
-ipcMain.handle("is-torrent-supported", () => torrentClient !== null);
+ipcMain.handle("is-torrent-supported", () => torrentWorkerReady);
+
+function parseMagnetDisplayName(magnetUri: string): string | null {
+  try {
+    const match = magnetUri.match(/[?&]dn=([^&]+)/i);
+    if (!match) return null;
+    return decodeURIComponent(match[1].replace(/\+/g, '%20'));
+  } catch {
+    return null;
+  }
+}
 
 ipcMain.handle("add-torrent", async (_, magnetUri: string) => {
-  if (!torrentClient) {
-    throw new Error("Torrent support is not available. WebTorrent failed to load.");
-  }
+  if (!torrentWorkerReady) throw new Error("Torrent support is not available.");
   
   const settings = store.get("settings");
   const downloadPath = settings.downloadPath;
@@ -1189,139 +1330,75 @@ ipcMain.handle("add-torrent", async (_, magnetUri: string) => {
     fs.mkdirSync(downloadPath, { recursive: true });
   }
 
-  return new Promise((resolve, reject) => {
-    try {
-      const torrent = torrentClient.add(magnetUri, { path: downloadPath }, (torrent: any) => {
-        const torrentId = uuidv4();
-        activeTorrents.set(torrentId, torrent);
+  try {
+    const torrentId = uuidv4();
+    const displayName = parseMagnetDisplayName(magnetUri) || "Loading torrent…";
 
-        const torrentInfo: TorrentInfo = {
-          id: torrentId,
-          name: torrent.name,
-          magnetUri: magnetUri,
-          size: torrent.length,
-          downloaded: 0,
-          uploaded: 0,
-          progress: 0,
-          downloadSpeed: 0,
-          uploadSpeed: 0,
-          peers: 0,
-          seeds: 0,
-          status: "downloading",
-          path: path.join(downloadPath, torrent.name),
-        };
+    console.log(`[Torrent] Adding magnet: ${displayName}`);
+    console.log(`[Torrent] Trackers: ${publicTrackers.length}`);
 
-        const torrents = store.get("torrents");
-        torrents.push(torrentInfo);
-        store.set("torrents", torrents);
+    activeTorrentIds.add(torrentId);
 
-        mainWindow?.webContents.send("torrent-added", torrentInfo);
+    const torrentInfo: TorrentInfo = {
+      id: torrentId,
+      name: displayName,
+      magnetUri,
+      size: 0,
+      downloaded: 0,
+      uploaded: 0,
+      progress: 0,
+      downloadSpeed: 0,
+      uploadSpeed: 0,
+      peers: 0,
+      seeds: 0,
+      status: "downloading",
+      path: path.join(downloadPath, displayName),
+      infoHash: undefined,
+    };
 
-        // Update progress periodically
-        const updateInterval = setInterval(() => {
-          if (!activeTorrents.has(torrentId)) {
-            clearInterval(updateInterval);
-            return;
-          }
+    const torrents = store.get("torrents");
+    torrents.push(torrentInfo);
+    store.set("torrents", torrents);
+    mainWindow?.webContents.send("torrent-added", torrentInfo);
 
-          const torrents = store.get("torrents");
-          const idx = torrents.findIndex((t) => t.id === torrentId);
-          if (idx !== -1) {
-            torrents[idx] = {
-              ...torrents[idx],
-              downloaded: torrent.downloaded,
-              uploaded: torrent.uploaded,
-              progress: torrent.progress,
-              downloadSpeed: torrent.downloadSpeed,
-              uploadSpeed: torrent.uploadSpeed,
-              peers: torrent.numPeers,
-              seeds: torrent.numPeers, // WebTorrent doesn't distinguish
-              status: torrent.done ? "completed" : "downloading",
-            };
-            store.set("torrents", torrents);
-            mainWindow?.webContents.send("torrent-progress", torrents[idx]);
-          }
-        }, 1000);
+    await callTorrentWorker({
+      type: "add-magnet",
+      torrentId,
+      magnetUri,
+      downloadPath,
+      announce: publicTrackers,
+    });
 
-        torrent.on("done", () => {
-          clearInterval(updateInterval);
-          const torrents = store.get("torrents");
-          const idx = torrents.findIndex((t) => t.id === torrentId);
-          if (idx !== -1) {
-            torrents[idx].status = "completed";
-            torrents[idx].progress = 1;
-            store.set("torrents", torrents);
-
-            // Add to library
-            const library = store.get("library");
-            library.push({
-              id: uuidv4(),
-              name: torrent.name,
-              path: path.join(downloadPath, torrent.name),
-              size: torrent.length,
-              dateAdded: new Date().toISOString(),
-            });
-            store.set("library", library);
-            mainWindow?.webContents.send("library-updated", library);
-            mainWindow?.webContents.send("torrent-complete", torrents[idx]);
-          }
-        });
-
-        torrent.on("error", (err: Error | string) => {
-          clearInterval(updateInterval);
-          const torrents = store.get("torrents");
-          const idx = torrents.findIndex((t) => t.id === torrentId);
-          if (idx !== -1) {
-            torrents[idx].status = "error";
-            store.set("torrents", torrents);
-            mainWindow?.webContents.send("torrent-error", { id: torrentId, error: typeof err === 'string' ? err : err.message });
-          }
-        });
-
-        resolve(torrentInfo);
-      });
-
-      torrent.on("error", (err: Error | string) => {
-        reject(err);
-      });
-    } catch (err: unknown) {
-      reject(err);
-    }
-  });
+    return torrentInfo;
+  } catch (err: any) {
+    activeTorrentIds.delete(err?.torrentId);
+    throw new Error(err?.message || "Failed to add torrent");
+  }
 });
 
 ipcMain.handle("pause-torrent", (_, id: string) => {
-  const torrent = activeTorrents.get(id);
-  if (torrent) {
-    torrent.pause();
-    const torrents = store.get("torrents");
-    const idx = torrents.findIndex((t) => t.id === id);
-    if (idx !== -1) {
-      torrents[idx].status = "paused";
-      store.set("torrents", torrents);
-    }
+  callTorrentWorker({ type: "pause", torrentId: id }).catch(() => {});
+  const torrents = store.get("torrents");
+  const idx = torrents.findIndex((t) => t.id === id);
+  if (idx !== -1) {
+    torrents[idx].status = "paused";
+    store.set("torrents", torrents);
   }
 });
 
 ipcMain.handle("resume-torrent", (_, id: string) => {
-  const torrent = activeTorrents.get(id);
-  if (torrent) {
-    torrent.resume();
-    const torrents = store.get("torrents");
-    const idx = torrents.findIndex((t) => t.id === id);
-    if (idx !== -1) {
-      torrents[idx].status = "downloading";
-      store.set("torrents", torrents);
-    }
+  callTorrentWorker({ type: "resume", torrentId: id }).catch(() => {});
+  const torrents = store.get("torrents");
+  const idx = torrents.findIndex((t) => t.id === id);
+  if (idx !== -1) {
+    torrents[idx].status = "downloading";
+    store.set("torrents", torrents);
   }
 });
 
 ipcMain.handle("remove-torrent", (_, id: string, deleteFiles: boolean) => {
-  const torrent = activeTorrents.get(id);
-  if (torrent) {
-    torrent.destroy({ destroyStore: deleteFiles });
-    activeTorrents.delete(id);
-  }
+  callTorrentWorker({ type: "remove", torrentId: id, deleteFiles }).catch(() => {});
+  activeTorrentIds.delete(id);
   const torrents = store.get("torrents").filter((t) => t.id !== id);
   store.set("torrents", torrents);
   return torrents;
@@ -1332,15 +1409,12 @@ ipcMain.handle("get-stream-server-port", () => streamServerPort);
 
 // Add torrent from .torrent file
 ipcMain.handle("add-torrent-file", async (_, filePath: string) => {
-  if (!torrentClient) {
-    throw new Error("Torrent support is not available.");
-  }
+  if (!torrentWorkerReady) throw new Error("Torrent support is not available.");
   
   if (!fs.existsSync(filePath)) {
     throw new Error("Torrent file not found");
   }
   
-  const torrentBuffer = fs.readFileSync(filePath);
   const settings = store.get("settings");
   const downloadPath = settings.downloadPath;
 
@@ -1348,121 +1422,55 @@ ipcMain.handle("add-torrent-file", async (_, filePath: string) => {
     fs.mkdirSync(downloadPath, { recursive: true });
   }
 
-  return new Promise((resolve, reject) => {
-    try {
-      const torrent = torrentClient.add(torrentBuffer, { path: downloadPath }, (torrent: any) => {
-        const torrentId = uuidv4();
-        activeTorrents.set(torrentId, torrent);
+  try {
+    const torrentId = uuidv4();
+    const fallbackName = path.basename(filePath).replace(/\.torrent$/i, '') || 'Loading torrent…';
 
-        const torrentInfo: TorrentInfo = {
-          id: torrentId,
-          name: torrent.name,
-          magnetUri: torrent.magnetURI,
-          size: torrent.length,
-          downloaded: 0,
-          uploaded: 0,
-          progress: 0,
-          downloadSpeed: 0,
-          uploadSpeed: 0,
-          peers: 0,
-          seeds: 0,
-          status: "downloading",
-          path: path.join(downloadPath, torrent.name),
-          infoHash: torrent.infoHash,
-        };
+    activeTorrentIds.add(torrentId);
 
-        const torrents = store.get("torrents");
-        torrents.push(torrentInfo);
-        store.set("torrents", torrents);
+    const torrentInfo: TorrentInfo = {
+      id: torrentId,
+      name: fallbackName,
+      magnetUri: '',
+      size: 0,
+      downloaded: 0,
+      uploaded: 0,
+      progress: 0,
+      downloadSpeed: 0,
+      uploadSpeed: 0,
+      peers: 0,
+      seeds: 0,
+      status: "downloading",
+      path: path.join(downloadPath, fallbackName),
+      infoHash: undefined,
+    };
 
-        mainWindow?.webContents.send("torrent-added", torrentInfo);
+    const torrents = store.get("torrents");
+    torrents.push(torrentInfo);
+    store.set("torrents", torrents);
+    mainWindow?.webContents.send("torrent-added", torrentInfo);
 
-        // Setup progress and completion handlers (same as add-torrent)
-        const updateInterval = setInterval(() => {
-          if (!activeTorrents.has(torrentId)) {
-            clearInterval(updateInterval);
-            return;
-          }
-          const torrents = store.get("torrents");
-          const idx = torrents.findIndex((t) => t.id === torrentId);
-          if (idx !== -1) {
-            torrents[idx] = {
-              ...torrents[idx],
-              downloaded: torrent.downloaded,
-              uploaded: torrent.uploaded,
-              progress: torrent.progress,
-              downloadSpeed: torrent.downloadSpeed,
-              uploadSpeed: torrent.uploadSpeed,
-              peers: torrent.numPeers,
-              seeds: torrent.numPeers,
-              status: torrent.done ? "completed" : "downloading",
-            };
-            store.set("torrents", torrents);
-            mainWindow?.webContents.send("torrent-progress", torrents[idx]);
-          }
-        }, 1000);
+    await callTorrentWorker({
+      type: "add-file",
+      torrentId,
+      filePath,
+      downloadPath,
+      announce: publicTrackers,
+    });
 
-        torrent.on("done", () => {
-          clearInterval(updateInterval);
-          const torrents = store.get("torrents");
-          const idx = torrents.findIndex((t) => t.id === torrentId);
-          if (idx !== -1) {
-            torrents[idx].status = "completed";
-            torrents[idx].progress = 1;
-            store.set("torrents", torrents);
-
-            const library = store.get("library");
-            library.push({
-              id: uuidv4(),
-              name: torrent.name,
-              path: path.join(downloadPath, torrent.name),
-              size: torrent.length,
-              dateAdded: new Date().toISOString(),
-              category: detectCategory(path.join(downloadPath, torrent.name)),
-            });
-            store.set("library", library);
-            mainWindow?.webContents.send("library-updated", library);
-            mainWindow?.webContents.send("torrent-complete", torrents[idx]);
-          }
-        });
-
-        torrent.on("error", (err: Error | string) => {
-          clearInterval(updateInterval);
-          const torrents = store.get("torrents");
-          const idx = torrents.findIndex((t) => t.id === torrentId);
-          if (idx !== -1) {
-            torrents[idx].status = "error";
-            store.set("torrents", torrents);
-            mainWindow?.webContents.send("torrent-error", { id: torrentId, error: typeof err === 'string' ? err : err.message });
-          }
-        });
-
-        resolve(torrentInfo);
-      });
-
-      torrent.on("error", (err: Error | string) => {
-        reject(err);
-      });
-    } catch (err) {
-      reject(err);
-    }
-  });
+    return torrentInfo;
+  } catch (err: any) {
+    throw new Error(err?.message || "Failed to add torrent file");
+  }
 });
 
 // Get torrent files list for streaming
 ipcMain.handle("get-torrent-files", (_, infoHash: string) => {
-  if (!torrentClient) return [];
-  
-  const torrent = torrentClient.get(infoHash);
-  if (!torrent) return [];
-  
-  return torrent.files.map((file: any, index: number) => ({
-    index,
-    name: file.name,
-    path: file.path,
-    length: file.length,
-    downloaded: file.downloaded,
-    progress: file.progress,
-    streamUrl: `http://127.0.0.1:${streamServerPort}/stream/${infoHash}/${encodeURIComponent(file.name)}`,
-  }));
+  if (!torrentWorkerReady) return [];
+  return callTorrentWorker<any[]>({ type: "get-files", infoHash }).then((files) =>
+    (files || []).map((file: any) => ({
+      ...file,
+      streamUrl: `http://127.0.0.1:${streamServerPort}/stream/${infoHash}/${encodeURIComponent(file.name)}`,
+    }))
+  );
 });

@@ -18,6 +18,7 @@ export function App() {
     updateDownload,
     addTorrent,
     updateTorrent,
+    setCurrentView,
   } = useAppStore();
 
   useEffect(() => {
@@ -64,6 +65,20 @@ export function App() {
         updateTorrent(data.id, { status: "error" });
       });
 
+      const unsubTorrentFile = window.limbo.onTorrentFileOpened(async (filePath: string) => {
+        try {
+          setCurrentView("downloads");
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('switch-to-torrents'));
+          }, 100);
+          // `addTorrentFile` will cause the main process to emit `torrent-added`.
+          // We listen for that event above and add it to state there.
+          await window.limbo.addTorrentFile(filePath);
+        } catch (err) {
+          console.error("Failed to add torrent file:", err);
+        }
+      });
+
       return () => {
         unsubStarted();
         unsubProgress();
@@ -73,6 +88,7 @@ export function App() {
         unsubTorrentProgress();
         unsubTorrentComplete();
         unsubTorrentError();
+        unsubTorrentFile();
       };
     }
   }, []);

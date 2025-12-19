@@ -11,6 +11,6 @@
     "declaration": false,
     "resolveJsonModule": true
   },
-  "include": ["main.ts", "extract-worker.ts"],
+  "include": ["main.ts", "extract-worker.ts", "torrent-worker.ts"],
   "exclude": ["preload.ts"]
 }

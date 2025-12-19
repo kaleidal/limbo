@@ -1,0 +1,394 @@
+import { parentPort } from "worker_threads";
+import fs from "fs";
+import http from "http";
+import path from "path";
+
+type WorkerRequest =
+  | { type: "init"; enableSeeding: boolean; publicTrackers: string[] }
+  | {
+      type: "add-magnet";
+      requestId: string;
+      torrentId: string;
+      magnetUri: string;
+      downloadPath: string;
+      announce: string[];
+    }
+  | {
+      type: "add-file";
+      requestId: string;
+      torrentId: string;
+      filePath: string;
+      downloadPath: string;
+      announce: string[];
+    }
+  | { type: "pause"; requestId: string; torrentId: string }
+  | { type: "resume"; requestId: string; torrentId: string }
+  | { type: "remove"; requestId: string; torrentId: string; deleteFiles: boolean }
+  | { type: "set-seeding"; enableSeeding: boolean }
+  | { type: "get-files"; requestId: string; infoHash: string };
+
+type WorkerResponse = { type: "response"; requestId: string; ok: true; data?: any } | { type: "response"; requestId: string; ok: false; error: string };
+
+type WorkerEvent =
+  | { type: "ready"; ok: true; streamServerPort: number }
+  | { type: "ready"; ok: false; error: string }
+  | { type: "event"; event: "torrent-metadata"; payload: any }
+  | { type: "event"; event: "torrent-progress"; payload: any }
+  | { type: "event"; event: "torrent-done"; payload: any }
+  | { type: "event"; event: "torrent-error"; payload: any };
+
+let torrentClient: any = null;
+let streamServer: http.Server | null = null;
+let streamServerPort = 0;
+let enableSeeding = false;
+let publicTrackers: string[] = [];
+
+const torrentsById = new Map<string, any>();
+
+function post(msg: WorkerResponse | WorkerEvent) {
+  parentPort?.postMessage(msg);
+}
+
+function respondOk(requestId: string, data?: any) {
+  post({ type: "response", requestId, ok: true, data });
+}
+
+function respondErr(requestId: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  post({ type: "response", requestId, ok: false, error: message });
+}
+
+function getMimeType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    ".mp4": "video/mp4",
+    ".mkv": "video/x-matroska",
+    ".avi": "video/x-msvideo",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".pdf": "application/pdf",
+    ".zip": "application/zip",
+    ".rar": "application/x-rar-compressed",
+  };
+  return mimeTypes[ext] || "application/octet-stream";
+}
+
+function applyTorrentUploadPolicy(torrent: any, allowSeeding: boolean) {
+  const attachNoUpload = (wire: any) => {
+    try {
+      wire.choke?.();
+    } catch {}
+    try {
+      wire.on?.("unchoke", () => {
+        try {
+          wire.choke?.();
+        } catch {}
+      });
+    } catch {}
+  };
+
+  if (allowSeeding) {
+    if (torrent?.__limboNoUploadInterval) {
+      clearInterval(torrent.__limboNoUploadInterval);
+      torrent.__limboNoUploadInterval = null;
+    }
+    torrent.__limboNoUploadApplied = false;
+    return;
+  }
+
+  if (torrent.__limboNoUploadApplied) return;
+  torrent.__limboNoUploadApplied = true;
+
+  try {
+    torrent.on?.("wire", attachNoUpload);
+  } catch {}
+  try {
+    if (Array.isArray(torrent.wires)) {
+      for (const w of torrent.wires) attachNoUpload(w);
+    }
+  } catch {}
+
+  torrent.__limboNoUploadInterval = setInterval(() => {
+    try {
+      if (Array.isArray(torrent.wires)) {
+        for (const w of torrent.wires) {
+          try {
+            w.choke?.();
+          } catch {}
+        }
+      }
+    } catch {}
+  }, 1500);
+}
+
+async function ensureTorrentClient() {
+  if (torrentClient) return;
+  const WebTorrent = await import("webtorrent");
+  torrentClient = new WebTorrent.default();
+}
+
+async function ensureStreamServer() {
+  if (streamServer) return;
+
+  streamServer = http.createServer((req, res) => {
+    const match = req.url?.match(/^\/stream\/([0-9a-f]{40})(?:\/(.*))?$/);
+    if (!match) {
+      res.statusCode = 404;
+      return res.end("Not found");
+    }
+
+    const infoHash = match[1];
+    const fileName = match[2] ? decodeURIComponent(match[2]) : null;
+    const torrent = torrentClient?.get(infoHash);
+
+    if (!torrent) {
+      res.statusCode = 404;
+      return res.end("Torrent not found");
+    }
+
+    let file = fileName
+      ? torrent.files.find((f: any) => f.name === fileName)
+      : torrent.files.find((f: any) => f.name.match(/\.(mp4|mkv|avi|mov|webm)$/i));
+
+    if (!file) file = torrent.files[0];
+    if (!file) {
+      res.statusCode = 404;
+      return res.end("No file found");
+    }
+
+    const range = req.headers.range;
+    const fileSize = file.length;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = end - start + 1;
+
+      res.writeHead(206, {
+        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": chunkSize,
+        "Content-Type": getMimeType(file.name),
+      });
+
+      const stream = file.createReadStream({ start, end });
+      stream.pipe(res);
+    } else {
+      res.writeHead(200, {
+        "Content-Length": fileSize,
+        "Content-Type": getMimeType(file.name),
+      });
+      file.createReadStream().pipe(res);
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    streamServer!.once("error", reject);
+    streamServer!.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const addr = streamServer.address();
+  if (addr && typeof addr === "object") {
+    streamServerPort = addr.port;
+  }
+}
+
+function attachTorrentLifecycle(torrentId: string, torrent: any) {
+  torrent.on("warning", (warn: any) => {
+    post({ type: "event", event: "torrent-error", payload: { id: torrentId, error: String(warn?.message || warn) } });
+  });
+
+  torrent.on("error", (err: any) => {
+    post({ type: "event", event: "torrent-error", payload: { id: torrentId, error: String(err?.message || err) } });
+  });
+
+  const sendMetadata = () => {
+    const name = torrent.name || "Loading torrent…";
+    post({
+      type: "event",
+      event: "torrent-metadata",
+      payload: {
+        id: torrentId,
+        name,
+        size: torrent.length || 0,
+        magnetUri: torrent.magnetURI || "",
+        infoHash: torrent.infoHash,
+      },
+    });
+  };
+
+  torrent.once("metadata", sendMetadata);
+  torrent.once("ready", sendMetadata);
+
+  const interval = setInterval(() => {
+    post({
+      type: "event",
+      event: "torrent-progress",
+      payload: {
+        id: torrentId,
+        downloaded: torrent.downloaded || 0,
+        uploaded: enableSeeding ? (torrent.uploaded || 0) : 0,
+        progress: torrent.progress || 0,
+        downloadSpeed: torrent.downloadSpeed || 0,
+        uploadSpeed: enableSeeding ? (torrent.uploadSpeed || 0) : 0,
+        peers: torrent.numPeers || 0,
+        seeds: torrent.numPeers || 0,
+        done: !!torrent.done,
+      },
+    });
+  }, 1000);
+
+  torrent.__limboProgressInterval = interval;
+
+  torrent.on("done", () => {
+    if (torrent.__limboProgressInterval) {
+      clearInterval(torrent.__limboProgressInterval);
+      torrent.__limboProgressInterval = null;
+    }
+
+    post({ type: "event", event: "torrent-done", payload: { id: torrentId } });
+
+    if (!enableSeeding) {
+      try {
+        torrent.destroy?.({ destroyStore: false });
+      } catch {}
+      torrentsById.delete(torrentId);
+    }
+  });
+}
+
+async function handleInit(msg: Extract<WorkerRequest, { type: "init" }>) {
+  enableSeeding = msg.enableSeeding;
+  publicTrackers = msg.publicTrackers || [];
+
+  try {
+    await ensureTorrentClient();
+    await ensureStreamServer();
+    post({ type: "ready", ok: true, streamServerPort });
+  } catch (err) {
+    post({ type: "ready", ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+parentPort?.on("message", async (msg: WorkerRequest) => {
+  try {
+    if (msg.type === "init") {
+      await handleInit(msg);
+      return;
+    }
+
+    if (!torrentClient) {
+      // If init failed, all operations should fail explicitly.
+      if ((msg as any).requestId) respondErr((msg as any).requestId, "Torrent worker not initialized");
+      return;
+    }
+
+    switch (msg.type) {
+      case "set-seeding": {
+        enableSeeding = msg.enableSeeding;
+        for (const torrent of torrentsById.values()) {
+          applyTorrentUploadPolicy(torrent, enableSeeding);
+        }
+        return;
+      }
+
+      case "add-magnet": {
+        const { requestId, torrentId, magnetUri, downloadPath, announce } = msg;
+        const torrent = torrentClient.add(magnetUri, {
+          path: downloadPath,
+          announce: announce?.length ? announce : publicTrackers,
+        });
+        torrentsById.set(torrentId, torrent);
+        applyTorrentUploadPolicy(torrent, enableSeeding);
+        attachTorrentLifecycle(torrentId, torrent);
+        respondOk(requestId);
+        return;
+      }
+
+      case "add-file": {
+        const { requestId, torrentId, filePath, downloadPath, announce } = msg;
+        if (!fs.existsSync(filePath)) throw new Error("Torrent file not found");
+        const torrentBuffer = fs.readFileSync(filePath);
+        const torrent = torrentClient.add(torrentBuffer, {
+          path: downloadPath,
+          announce: announce?.length ? announce : publicTrackers,
+        });
+        torrentsById.set(torrentId, torrent);
+        applyTorrentUploadPolicy(torrent, enableSeeding);
+        attachTorrentLifecycle(torrentId, torrent);
+        respondOk(requestId);
+        return;
+      }
+
+      case "pause": {
+        const torrent = torrentsById.get(msg.torrentId);
+        torrent?.pause?.();
+        respondOk(msg.requestId);
+        return;
+      }
+
+      case "resume": {
+        const torrent = torrentsById.get(msg.torrentId);
+        torrent?.resume?.();
+        applyTorrentUploadPolicy(torrent, enableSeeding);
+        respondOk(msg.requestId);
+        return;
+      }
+
+      case "remove": {
+        const torrent = torrentsById.get(msg.torrentId);
+        if (torrent) {
+          try {
+            if (torrent.__limboProgressInterval) {
+              clearInterval(torrent.__limboProgressInterval);
+              torrent.__limboProgressInterval = null;
+            }
+          } catch {}
+          torrent.destroy?.({ destroyStore: msg.deleteFiles });
+          torrentsById.delete(msg.torrentId);
+        }
+        respondOk(msg.requestId);
+        return;
+      }
+
+      case "get-files": {
+        const torrent = torrentClient.get(msg.infoHash);
+        if (!torrent) {
+          respondOk(msg.requestId, []);
+          return;
+        }
+        const files = torrent.files.map((file: any, index: number) => ({
+          index,
+          name: file.name,
+          path: file.path,
+          length: file.length,
+          downloaded: file.downloaded,
+          progress: file.progress,
+        }));
+        respondOk(msg.requestId, files);
+        return;
+      }
+
+      default: {
+        const _exhaustive: never = msg;
+        return _exhaustive;
+      }
+    }
+  } catch (err) {
+    const requestId = (msg as any).requestId;
+    if (typeof requestId === "string") {
+      respondErr(requestId, err);
+    } else {
+      post({ type: "event", event: "torrent-error", payload: { id: "unknown", error: err instanceof Error ? err.message : String(err) } });
+    }
+  }
+});

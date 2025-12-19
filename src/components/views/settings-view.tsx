@@ -14,6 +14,7 @@ import {
   Globe,
   RotateCcw,
   Monitor,
+  Share2,
 } from "lucide-react";
 
 export function SettingsView() {
@@ -98,6 +99,33 @@ export function SettingsView() {
                   })
                 }
                 className="bg-neutral-800 border-neutral-700 mt-1 w-32"
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Torrent Settings */}
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Share2 className="w-5 h-5" />
+            Torrent Settings
+          </h2>
+          <div className="space-y-4 bg-neutral-900 rounded-lg p-4 border border-neutral-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Enable Seeding</p>
+                <p className="text-sm text-neutral-500">
+                  Continue uploading after download completes. Disable to stop sharing immediately.
+                </p>
+              </div>
+              <Switch
+                checked={localSettings.enableSeeding}
+                onCheckedChange={(checked: boolean) =>
+                  setLocalSettings({
+                    ...localSettings,
+                    enableSeeding: checked,
+                  })
+                }
               />
             </div>
           </div>

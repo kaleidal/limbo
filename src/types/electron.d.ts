@@ -60,6 +60,7 @@ export interface Settings {
   downloadPath: string;
   maxConcurrentDownloads: number;
   hardwareAcceleration: boolean;
+  enableSeeding: boolean;
   debrid: {
     service: "realdebrid" | "alldebrid" | "premiumize" | null;
     apiKey: string;

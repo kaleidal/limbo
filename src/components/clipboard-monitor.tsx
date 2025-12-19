@@ -100,7 +100,17 @@ export function ClipboardMonitor() {
 
     if (completed > 0) {
       setActiveBookmark(null);
+      // Switch to downloads view
       setCurrentView("downloads");
+      
+      // If any URLs were magnets and not using debrid, trigger switch to torrents tab
+      // Use a timeout to ensure the DownloadsView is mounted first
+      const hasMagnets = detectedUrls.some(u => u.startsWith("magnet:"));
+      if (hasMagnets && !useDebrid) {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('switch-to-torrents'));
+        }, 100);
+      }
       
       // Hide after short delay on success
       setTimeout(() => {
