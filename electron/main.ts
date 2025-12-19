@@ -15,8 +15,10 @@ import { fileURLToPath } from "url";
 import { Worker } from "worker_threads";
 import Store from "electron-store";
 import { v4 as uuidv4 } from "uuid";
-import { autoUpdater } from "electron-updater";
+import electronUpdater from "electron-updater";
 import log from "electron-log";
+
+const { autoUpdater } = electronUpdater;
 
 // ESM compatibility
 const __filename = fileURLToPath(import.meta.url);
