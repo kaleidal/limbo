@@ -1,32 +1,111 @@
 {
   "name": "limbo",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "A pirated software manager with integrated browser, download manager, and torrent client",
+  "main": "dist-electron/main.js",
   "type": "module",
+  "author": {
+    "name": "Kaleidal",
+    "email": "hello@kaleid.al"
+  },
+  "homepage": "https://limbo.al",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.preload.json && cross-env NODE_ENV=development electron .\"",
+    "build": "tsc -b && vite build && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.preload.json",
+    "build:electron": "npm run build && electron-builder",
+    "generate-icons": "npx tsx scripts/generate-icons.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },
+  "build": {
+    "appId": "al.kaleid.limbo",
+    "productName": "Limbo",
+    "directories": {
+      "output": "release"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "kaleidal",
+      "repo": "limbo"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "public/**/*"
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "public/icon.png"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "public/icon.png"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "public/icon.png"
+    },
+    "fileAssociations": [
+      {
+        "ext": "torrent",
+        "name": "Torrent File",
+        "role": "Viewer"
+      },
+      {
+        "ext": "magnet",
+        "name": "Magnet Link",
+        "role": "Viewer"
+      }
+    ]
+  },
   "dependencies": {
+    "7zip-min": "^2.1.0",
+    "@base-ui/react": "^1.0.0",
+    "@fontsource-variable/inter": "^5.2.8",
     "@tailwindcss/vite": "^4.1.17",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "electron-store": "^11.0.2",
+    "extract-zip": "^2.0.1",
+    "lucide-react": "^0.562.0",
+    "node-unrar-js": "^2.0.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "tailwindcss": "^4.1.17"
+    "shadcn": "^3.6.2",
+    "tailwind-merge": "^3.4.0",
+    "tailwindcss": "^4.1.17",
+    "tw-animate-css": "^1.4.0",
+    "unzipper": "^0.12.3",
+    "uuid": "^13.0.0",
+    "webtorrent": "^2.8.5",
+    "zustand": "^5.0.9"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
+    "@types/uuid": "^11.0.0",
+    "@types/webtorrent": "^0.110.1",
     "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "electron-icon-builder": "^2.0.1",
+    "electron-rebuild": "^3.2.9",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "sharp": "^0.34.5",
+    "to-ico": "^1.1.5",
+    "tsx": "^4.21.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "wait-on": "^9.0.3"
   }
 }
