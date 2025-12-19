@@ -232,3 +232,34 @@ export function updateTorrentSeeding(enableSeeding: boolean) {
     torrentWorker?.postMessage({ type: "set-seeding", enableSeeding });
   } catch {}
 }
+
+export async function shutdownTorrentWorker(): Promise<void> {
+  const worker = torrentWorker;
+  if (!worker) return;
+
+  // Ask the worker to cleanup WebTorrent (UDP trackers) and timers first.
+  try {
+    // Only works if worker is initialized, but it's safe to try.
+    if (torrentWorkerReady) {
+      await callTorrentWorker({ type: "shutdown" }, 5000);
+    }
+  } catch {}
+
+  torrentWorkerReady = false;
+  streamServerPort = 0;
+
+  // Reject any pending requests so callers don't hang
+  for (const [requestId, pending] of pendingTorrentWorkerRequests) {
+    clearTimeout(pending.timeout);
+    pending.reject(new Error("Torrent worker shutting down"));
+    pendingTorrentWorkerRequests.delete(requestId);
+  }
+
+  activeTorrentIds.clear();
+  onTorrentEvent = null;
+  torrentWorker = null;
+
+  try {
+    await worker.terminate();
+  } catch {}
+}

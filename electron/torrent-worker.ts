@@ -5,6 +5,7 @@ import path from "path";
 
 type WorkerRequest =
   | { type: "init"; enableSeeding: boolean; publicTrackers: string[] }
+  | { type: "shutdown"; requestId: string }
   | {
       type: "add-magnet";
       requestId: string;
@@ -300,6 +301,48 @@ function safeStopTorrent(torrent: any) {
   } catch {}
 }
 
+async function shutdownWorker(): Promise<void> {
+  // Stop all per-torrent intervals and destroy torrents
+  for (const torrent of torrentsById.values()) {
+    try {
+      safeStopTorrent(torrent);
+    } catch {}
+    try {
+      torrent?.destroy?.({ destroyStore: false });
+    } catch {}
+  }
+  torrentsById.clear();
+  torrentMetaById.clear();
+  pausedTorrentMetaById.clear();
+
+  // Close stream server
+  if (streamServer) {
+    const server = streamServer;
+    streamServer = null;
+    await new Promise<void>((resolve) => {
+      try {
+        server.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
+  }
+  streamServerPort = 0;
+
+  // Destroy WebTorrent client (closes UDP tracker sockets/DHT)
+  if (torrentClient) {
+    const client = torrentClient;
+    torrentClient = null;
+    await new Promise<void>((resolve) => {
+      try {
+        client.destroy(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
+  }
+}
+
 async function handleInit(msg: Extract<WorkerRequest, { type: "init" }>) {
   enableSeeding = msg.enableSeeding;
   publicTrackers = msg.publicTrackers || [];
@@ -317,6 +360,12 @@ parentPort?.on("message", async (msg: WorkerRequest) => {
   try {
     if (msg.type === "init") {
       await handleInit(msg);
+      return;
+    }
+
+    if (msg.type === "shutdown") {
+      await shutdownWorker();
+      respondOk(msg.requestId);
       return;
     }
 

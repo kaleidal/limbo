@@ -39,6 +39,15 @@ function getExtractWorker(): Worker {
   return extractWorker;
 }
 
+export async function shutdownExtractWorker(): Promise<void> {
+  const worker = extractWorker;
+  extractWorker = null;
+  if (!worker) return;
+  try {
+    await worker.terminate();
+  } catch {}
+}
+
 export function handleMultiPartExtraction(
   download: Download,
   getMainWindow: () => BrowserWindow | null

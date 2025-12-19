@@ -11,9 +11,14 @@ import log from "electron-log";
 import { store } from "./src/store.js";
 import { findMagnetArg, findTorrentFileArg } from "./src/utils.js";
 import { isDownloadableUrl } from "./src/file-hosts.js";
-import { initTorrentWorker, setTorrentEventHandler } from "./src/torrent.js";
+import { initTorrentWorker, setTorrentEventHandler, shutdownTorrentWorker } from "./src/torrent.js";
 import { registerAllIpcHandlers } from "./src/ipc/index.js";
-import { setupDownloadHandler, activeDownloads, syncLibraryWithFilesystem } from "./src/downloads/index.js";
+import {
+  setupDownloadHandler,
+  activeDownloads,
+  syncLibraryWithFilesystem,
+  shutdownExtractWorker,
+} from "./src/downloads/index.js";
 
 const { autoUpdater } = electronUpdater;
 
@@ -53,7 +58,10 @@ let mainWindow: BrowserWindow | null = null;
 let pendingMagnetLink: string | null = null;
 let pendingTorrentFile: string | null = null;
 let clipboardWatcher: ReturnType<typeof setInterval> | null = null;
+let librarySyncInterval: ReturnType<typeof setInterval> | null = null;
 let lastClipboardContent = "";
+
+let isQuitting = false;
 
 if (!gotTheLock) {
   app.quit();
@@ -207,15 +215,33 @@ function createWindow() {
       clearInterval(clipboardWatcher);
       clipboardWatcher = null;
     }
+
+    if (librarySyncInterval) {
+      clearInterval(librarySyncInterval);
+      librarySyncInterval = null;
+    }
   });
 
   startClipboardMonitoring();
   syncLibraryWithFilesystem();
 
   // Periodic library sync
-  setInterval(() => {
+  librarySyncInterval = setInterval(() => {
     syncLibraryWithFilesystem();
   }, 30000);
+}
+
+async function shutdownBackgroundWork() {
+  if (clipboardWatcher) {
+    clearInterval(clipboardWatcher);
+    clipboardWatcher = null;
+  }
+  if (librarySyncInterval) {
+    clearInterval(librarySyncInterval);
+    librarySyncInterval = null;
+  }
+
+  await Promise.allSettled([shutdownTorrentWorker(), shutdownExtractWorker()]);
 }
 
 app.whenReady().then(async () => {
@@ -258,6 +284,20 @@ app.whenReady().then(async () => {
 
   const magnetArg = findMagnetArg(process.argv);
   if (magnetArg) pendingMagnetLink = magnetArg;
+});
+
+app.on("before-quit", (event) => {
+  if (isQuitting) return;
+
+  // Ensure background workers/timers are stopped before Electron tears down Node.
+  isQuitting = true;
+  event.preventDefault();
+
+  shutdownBackgroundWork()
+    .catch(() => {})
+    .finally(() => {
+      app.quit();
+    });
 });
 
 app.on("window-all-closed", () => {
