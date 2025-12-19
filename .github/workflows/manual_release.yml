@@ -1,6 +1,12 @@
 name: Manual Build and Release
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish artifacts to GitHub Releases (electron-builder --publish always)'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -40,4 +46,11 @@ jobs:
         run: npm rebuild node-datachannel
 
       - name: Build (electron-builder)
-        run: npm run build:electron
+        if: ${{ inputs.publish != true }}
+        run: npm run build:electron -- --publish never
+
+      - name: Build and publish (electron-builder)
+        if: ${{ inputs.publish == true }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build:electron -- --publish always
