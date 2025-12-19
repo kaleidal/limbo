@@ -61,6 +61,8 @@ export interface Settings {
   maxConcurrentDownloads: number;
   hardwareAcceleration: boolean;
   enableSeeding: boolean;
+  startOnBoot: boolean;
+  requireVpn: boolean;
   debrid: {
     service: "realdebrid" | "alldebrid" | "premiumize" | null;
     apiKey: string;
@@ -106,6 +108,8 @@ export interface LimboAPI {
   removeBookmark: (id: string) => Promise<Bookmark[]>;
   updateBookmark: (bookmark: Bookmark) => Promise<Bookmark[]>;
   resetBookmarks: () => Promise<Bookmark[]>;
+  exportBookmarks: () => Promise<string | null>;
+  importBookmarks: () => Promise<Bookmark[] | null>;
 
   // Library
   getLibrary: () => Promise<LibraryItem[]>;
@@ -122,6 +126,8 @@ export interface LimboAPI {
   resumeDownload: (id: string) => Promise<void>;
   cancelDownload: (id: string) => Promise<Download[]>;
   clearCompletedDownloads: () => Promise<Download[]>;
+  pauseAllDownloads: () => Promise<void>;
+  resumeAllDownloads: () => Promise<void>;
 
   // Torrents
   getTorrents: () => Promise<TorrentInfo[]>;
@@ -133,6 +139,9 @@ export interface LimboAPI {
   isTorrentSupported: () => Promise<boolean>;
   getStreamServerPort: () => Promise<number>;
   getTorrentFiles: (infoHash: string) => Promise<TorrentFile[]>;
+  pauseAllTorrents: () => Promise<void>;
+  resumeAllTorrents: () => Promise<void>;
+  checkVpnStatus: () => Promise<boolean>;
 
   // Debrid
   isDebridConfigured: () => Promise<boolean>;

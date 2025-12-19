@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, session, dialog, shell, clipboard, } from "electron";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { fileURLToPath } from "url";
 import { Worker } from "worker_threads";
 import Store from "electron-store";
@@ -15,6 +16,33 @@ const __dirname = path.dirname(__filename);
 function isExtractableArchive(filename) {
     const ext = path.extname(filename).toLowerCase();
     return ['.zip', '.rar', '.7z'].includes(ext);
+}
+// VPN detection - checks for common VPN network interface patterns
+function isVpnConnected() {
+    try {
+        const interfaces = os.networkInterfaces();
+        const vpnPatterns = [
+            /^tun/i, /^tap/i, /^ppp/i, /^wg/i, // Linux/macOS VPN interfaces
+            /^utun/i, // macOS IKEv2/IPsec
+            /wireguard/i, /openvpn/i, /nordlynx/i, /proton/i, /mullvad/i,
+            /expressvpn/i, /surfshark/i, /cyberghost/i, /pia/i, /private.*internet/i,
+        ];
+        for (const [name, addrs] of Object.entries(interfaces)) {
+            if (!addrs)
+                continue;
+            // Check if interface name matches VPN patterns
+            if (vpnPatterns.some(p => p.test(name))) {
+                // Make sure it has a valid IP address
+                const hasIp = addrs.some(addr => addr.family === 'IPv4' && !addr.internal);
+                if (hasIp)
+                    return true;
+            }
+        }
+        return false;
+    }
+    catch {
+        return false;
+    }
 }
 if (process.platform === 'win32') {
     app.setAppUserModelId('al.kaleid.limbo');
@@ -466,6 +494,8 @@ const store = new Store({
             maxConcurrentDownloads: 3,
             hardwareAcceleration: true,
             enableSeeding: false,
+            startOnBoot: false,
+            requireVpn: false,
             debrid: {
                 service: null,
                 apiKey: "",
@@ -905,6 +935,92 @@ ipcMain.handle("reset-bookmarks", () => {
     store.set("bookmarks", defaults);
     return defaults;
 });
+function buildFaviconUrl(url) {
+    try {
+        const u = new URL(url);
+        return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=64`;
+    }
+    catch {
+        return "";
+    }
+}
+function normalizeBookmarkUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw)
+        return null;
+    try {
+        // Accept URLs without protocol and default them to https.
+        const candidate = raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
+        const u = new URL(candidate);
+        if (!u.hostname)
+            return null;
+        if (!['http:', 'https:'].includes(u.protocol))
+            return null;
+        return u.toString();
+    }
+    catch {
+        return null;
+    }
+}
+function sanitizeBookmarks(input) {
+    if (!Array.isArray(input))
+        return [];
+    const result = [];
+    const seenIds = new Set();
+    for (const entry of input) {
+        if (!entry || typeof entry !== "object")
+            continue;
+        const obj = entry;
+        const normalizedUrl = normalizeBookmarkUrl(obj.url);
+        if (!normalizedUrl)
+            continue;
+        const nameRaw = typeof obj.name === "string" ? obj.name.trim() : "";
+        let name = nameRaw;
+        if (!name) {
+            try {
+                name = new URL(normalizedUrl).hostname;
+            }
+            catch {
+                name = "Bookmark";
+            }
+        }
+        let id = typeof obj.id === "string" && obj.id.trim() ? obj.id.trim() : uuidv4();
+        while (seenIds.has(id))
+            id = uuidv4();
+        seenIds.add(id);
+        const favicon = typeof obj.favicon === "string" && obj.favicon.trim()
+            ? obj.favicon.trim()
+            : buildFaviconUrl(normalizedUrl);
+        result.push({ id, name, url: normalizedUrl, favicon });
+    }
+    return result;
+}
+ipcMain.handle("export-bookmarks", async () => {
+    const bookmarks = store.get("bookmarks");
+    const result = await dialog.showSaveDialog(mainWindow, {
+        title: "Export bookmarks",
+        defaultPath: path.join(app.getPath("documents"), "limbo-bookmarks.json"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath)
+        return null;
+    fs.writeFileSync(result.filePath, JSON.stringify(bookmarks, null, 2), "utf-8");
+    return result.filePath;
+});
+ipcMain.handle("import-bookmarks", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+        title: "Import bookmarks",
+        properties: ["openFile"],
+        filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePaths[0])
+        return null;
+    const raw = fs.readFileSync(result.filePaths[0], "utf-8");
+    const parsed = JSON.parse(raw);
+    const bookmarks = sanitizeBookmarks(parsed);
+    store.set("bookmarks", bookmarks);
+    return bookmarks;
+});
 // Library
 ipcMain.handle("get-library", () => store.get("library"));
 ipcMain.handle("add-to-library", (_, item) => {
@@ -952,10 +1068,44 @@ ipcMain.handle("pause-download", (_, id) => {
         item.pause();
     }
 });
-ipcMain.handle("resume-download", (_, id) => {
+ipcMain.handle("resume-download", async (_, id) => {
+    // First, try to resume an active download
     const item = activeDownloads.get(id);
     if (item) {
         item.resume();
+        return;
+    }
+    // If not in active downloads (app was restarted), re-initiate the download
+    const downloads = store.get("downloads");
+    const download = downloads.find((d) => d.id === id);
+    if (download && download.url && (download.status === "paused" || download.status === "downloading")) {
+        // Re-initiate download to the same path using session
+        // The will-download handler will handle setting up the download
+        const ses = session.fromPartition("persist:limbo");
+        ses.downloadURL(download.url);
+    }
+});
+ipcMain.handle("pause-all-downloads", () => {
+    for (const [, item] of activeDownloads) {
+        if (!item.isPaused()) {
+            item.pause();
+        }
+    }
+});
+ipcMain.handle("resume-all-downloads", async () => {
+    // Resume active downloads
+    for (const [, item] of activeDownloads) {
+        if (item.isPaused()) {
+            item.resume();
+        }
+    }
+    // Also re-initiate any paused downloads that aren't in activeDownloads (after restart)
+    const downloads = store.get("downloads");
+    const ses = session.fromPartition("persist:limbo");
+    for (const d of downloads) {
+        if (d.status === "paused" && d.url && !activeDownloads.has(d.id)) {
+            ses.downloadURL(d.url);
+        }
     }
 });
 ipcMain.handle("cancel-download", (_, id) => {
@@ -998,6 +1148,13 @@ ipcMain.handle("update-settings", (_, settings) => {
             torrentWorker?.postMessage({ type: "set-seeding", enableSeeding: updated.enableSeeding });
         }
         catch { }
+    }
+    // Handle start on boot setting
+    if (typeof settings.startOnBoot === "boolean" && settings.startOnBoot !== current.startOnBoot) {
+        app.setLoginItemSettings({
+            openAtLogin: settings.startOnBoot,
+            openAsHidden: false,
+        });
     }
     return updated;
 });
@@ -1208,11 +1365,18 @@ function parseMagnetDisplayName(magnetUri) {
         return null;
     }
 }
+ipcMain.handle("check-vpn-status", () => {
+    return isVpnConnected();
+});
 ipcMain.handle("add-torrent", async (_, magnetUri) => {
     if (!torrentWorkerReady)
         throw new Error("Torrent support is not available.");
     const settings = store.get("settings");
     const downloadPath = settings.downloadPath;
+    // Check VPN if required
+    if (settings.requireVpn && !isVpnConnected()) {
+        throw new Error("VPN_REQUIRED");
+    }
     // Ensure download directory exists
     if (!fs.existsSync(downloadPath)) {
         fs.mkdirSync(downloadPath, { recursive: true });
@@ -1275,6 +1439,26 @@ ipcMain.handle("resume-torrent", (_, id) => {
         store.set("torrents", torrents);
     }
 });
+ipcMain.handle("pause-all-torrents", () => {
+    const torrents = store.get("torrents");
+    for (const t of torrents) {
+        if (t.status === "downloading") {
+            callTorrentWorker({ type: "pause", torrentId: t.id }).catch(() => { });
+            t.status = "paused";
+        }
+    }
+    store.set("torrents", torrents);
+});
+ipcMain.handle("resume-all-torrents", () => {
+    const torrents = store.get("torrents");
+    for (const t of torrents) {
+        if (t.status === "paused") {
+            callTorrentWorker({ type: "resume", torrentId: t.id }).catch(() => { });
+            t.status = "downloading";
+        }
+    }
+    store.set("torrents", torrents);
+});
 ipcMain.handle("remove-torrent", (_, id, deleteFiles) => {
     callTorrentWorker({ type: "remove", torrentId: id, deleteFiles }).catch(() => { });
     activeTorrentIds.delete(id);
@@ -1293,6 +1477,10 @@ ipcMain.handle("add-torrent-file", async (_, filePath) => {
     }
     const settings = store.get("settings");
     const downloadPath = settings.downloadPath;
+    // Check VPN if required
+    if (settings.requireVpn && !isVpnConnected()) {
+        throw new Error("VPN_REQUIRED");
+    }
     if (!fs.existsSync(downloadPath)) {
         fs.mkdirSync(downloadPath, { recursive: true });
     }

@@ -92,7 +92,17 @@ export function ClipboardMonitor() {
         completed++;
         setSuccessCount(completed);
       } catch (err: any) {
-        errors.push(err.message || "Download failed");
+        // Parse error message for user-friendly display
+        const errMsg = err?.message || "Download failed";
+        if (errMsg.includes("VPN_REQUIRED")) {
+          errors.push("VPN required for torrents. Enable VPN or disable check in Settings.");
+        } else if (errMsg.includes("Error invoking remote method")) {
+          // Extract the actual error from IPC wrapper
+          const match = errMsg.match(/Error invoking remote method '[^']+': (.+)/);
+          errors.push(match?.[1] || errMsg);
+        } else {
+          errors.push(errMsg);
+        }
       }
     }
 

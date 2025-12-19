@@ -12,6 +12,8 @@ const api = {
     removeBookmark: (id) => electron_1.ipcRenderer.invoke("remove-bookmark", id),
     updateBookmark: (bookmark) => electron_1.ipcRenderer.invoke("update-bookmark", bookmark),
     resetBookmarks: () => electron_1.ipcRenderer.invoke("reset-bookmarks"),
+    exportBookmarks: () => electron_1.ipcRenderer.invoke("export-bookmarks"),
+    importBookmarks: () => electron_1.ipcRenderer.invoke("import-bookmarks"),
     // Library
     getLibrary: () => electron_1.ipcRenderer.invoke("get-library"),
     addToLibrary: (item) => electron_1.ipcRenderer.invoke("add-to-library", item),
@@ -26,6 +28,8 @@ const api = {
     resumeDownload: (id) => electron_1.ipcRenderer.invoke("resume-download", id),
     cancelDownload: (id) => electron_1.ipcRenderer.invoke("cancel-download", id),
     clearCompletedDownloads: () => electron_1.ipcRenderer.invoke("clear-completed-downloads"),
+    pauseAllDownloads: () => electron_1.ipcRenderer.invoke("pause-all-downloads"),
+    resumeAllDownloads: () => electron_1.ipcRenderer.invoke("resume-all-downloads"),
     // Torrents
     getTorrents: () => electron_1.ipcRenderer.invoke("get-torrents"),
     addTorrent: (magnetUri) => electron_1.ipcRenderer.invoke("add-torrent", magnetUri),
@@ -36,6 +40,9 @@ const api = {
     isTorrentSupported: () => electron_1.ipcRenderer.invoke("is-torrent-supported"),
     getStreamServerPort: () => electron_1.ipcRenderer.invoke("get-stream-server-port"),
     getTorrentFiles: (infoHash) => electron_1.ipcRenderer.invoke("get-torrent-files", infoHash),
+    pauseAllTorrents: () => electron_1.ipcRenderer.invoke("pause-all-torrents"),
+    resumeAllTorrents: () => electron_1.ipcRenderer.invoke("resume-all-torrents"),
+    checkVpnStatus: () => electron_1.ipcRenderer.invoke("check-vpn-status"),
     // Debrid
     isDebridConfigured: () => electron_1.ipcRenderer.invoke("is-debrid-configured"),
     convertMagnetDebrid: (magnetUri) => electron_1.ipcRenderer.invoke("convert-magnet-debrid", magnetUri),

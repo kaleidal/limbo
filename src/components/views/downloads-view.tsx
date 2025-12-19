@@ -17,6 +17,7 @@ import {
   Users,
   Loader2,
   Archive,
+  Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +29,7 @@ export function DownloadsView() {
   const [activeTab, setActiveTab] = useState<"downloads" | "torrents">("downloads");
   const [urlInput, setUrlInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [vpnWarning, setVpnWarning] = useState(false);
 
   // Listen for switch-to-torrents event from clipboard monitor
   useEffect(() => {
@@ -35,9 +37,15 @@ export function DownloadsView() {
       setActiveTab("torrents");
     };
     
+    const handleVpnRequired = () => {
+      setVpnWarning(true);
+    };
+    
     window.addEventListener("switch-to-torrents", handleSwitchToTorrents);
+    window.addEventListener("vpn-required", handleVpnRequired);
     return () => {
       window.removeEventListener("switch-to-torrents", handleSwitchToTorrents);
+      window.removeEventListener("vpn-required", handleVpnRequired);
     };
   }, []);
 
@@ -51,6 +59,19 @@ export function DownloadsView() {
 
   const formatSpeed = (bytesPerSecond: number) => {
     return formatSize(bytesPerSecond) + "/s";
+  };
+
+  const formatEta = (seconds: number) => {
+    if (!seconds || seconds <= 0 || !isFinite(seconds)) return "--";
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) {
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.round(seconds % 60);
+      return `${mins}m ${secs}s`;
+    }
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${mins}m`;
   };
 
   const getProgress = (downloaded: number, total: number) => {
@@ -83,6 +104,7 @@ export function DownloadsView() {
     if (!urlInput.trim() || !window.limbo || isAdding) return;
     
     setIsAdding(true);
+    setVpnWarning(false);
     try {
       // Check if it's a magnet link
       if (urlInput.startsWith("magnet:")) {
@@ -90,13 +112,18 @@ export function DownloadsView() {
           // Main process will emit `torrent-added` which App.tsx listens for.
           await window.limbo.addTorrent(urlInput);
           setActiveTab("torrents");
-        } catch (err) {
-          console.error("Failed to add torrent:", err);
+          setUrlInput("");
+        } catch (err: any) {
+          if (err?.message?.includes("VPN_REQUIRED")) {
+            setVpnWarning(true);
+          } else {
+            console.error("Failed to add torrent:", err);
+          }
         }
       } else {
         await window.limbo.startDownload(urlInput);
+        setUrlInput("");
       }
-      setUrlInput("");
     } finally {
       setIsAdding(false);
     }
@@ -156,6 +183,37 @@ export function DownloadsView() {
     }
   };
 
+  // Pause/Resume all handlers
+  const handlePauseAll = async () => {
+    if (!window.limbo) return;
+    if (activeTab === "downloads") {
+      await window.limbo.pauseAllDownloads();
+    } else {
+      await window.limbo.pauseAllTorrents();
+      // Update local state
+      torrents.forEach(t => {
+        if (t.status === "downloading") {
+          updateTorrent(t.id, { status: "paused" });
+        }
+      });
+    }
+  };
+
+  const handleResumeAll = async () => {
+    if (!window.limbo) return;
+    if (activeTab === "downloads") {
+      await window.limbo.resumeAllDownloads();
+    } else {
+      await window.limbo.resumeAllTorrents();
+      // Update local state
+      torrents.forEach(t => {
+        if (t.status === "paused") {
+          updateTorrent(t.id, { status: "downloading" });
+        }
+      });
+    }
+  };
+
   const activeDownloads = downloads.filter(
     (d) => d.status === "downloading" || d.status === "pending" || d.status === "extracting" || d.status === "paused"
   );
@@ -196,7 +254,7 @@ export function DownloadsView() {
       </div>
 
       {/* Add download input */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex gap-2 mb-4">
         <Input
           placeholder={
             activeTab === "downloads"
@@ -220,6 +278,53 @@ export function DownloadsView() {
         </Button>
       </div>
 
+      {/* Pause/Resume all controls */}
+      {((activeTab === "downloads" && activeDownloads.length > 0) ||
+        (activeTab === "torrents" && activeTorrents.length > 0)) && (
+        <div className="flex gap-2 mb-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handlePauseAll}
+            className="gap-2"
+          >
+            <Pause className="w-4 h-4" />
+            Pause All
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleResumeAll}
+            className="gap-2"
+          >
+            <Play className="w-4 h-4" />
+            Resume All
+          </Button>
+        </div>
+      )}
+
+      {/* VPN Warning Banner */}
+      {vpnWarning && (
+        <div className="flex items-center gap-3 p-4 mb-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+          <Shield className="w-5 h-5 text-amber-500 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-500">VPN Required</p>
+            <p className="text-sm text-neutral-400">
+              Torrent downloads are blocked because no VPN was detected. Connect to a VPN and try again, 
+              or disable this check in Settings &gt; Torrent Settings.
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setVpnWarning(false)}
+            className="text-neutral-400 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+      )}
+
       {activeTab === "downloads" ? (
         <div className="flex-1 overflow-auto space-y-6">
           {/* Active downloads */}
@@ -238,6 +343,7 @@ export function DownloadsView() {
                     onCancel={handleCancel}
                     onOpenLocation={handleOpenLocation}
                     formatSize={formatSize}
+                    formatEta={formatEta}
                     getProgress={getProgress}
                     getStatusIcon={getStatusIcon}
                   />
@@ -273,6 +379,7 @@ export function DownloadsView() {
                     onCancel={handleCancel}
                     onOpenLocation={handleOpenLocation}
                     formatSize={formatSize}
+                    formatEta={formatEta}
                     getProgress={getProgress}
                     getStatusIcon={getStatusIcon}
                   />
@@ -310,6 +417,7 @@ export function DownloadsView() {
                     onOpenLocation={handleOpenLocation}
                     formatSize={formatSize}
                     formatSpeed={formatSpeed}
+                    formatEta={formatEta}
                     getStatusIcon={getStatusIcon}
                   />
                 ))}
@@ -334,6 +442,7 @@ export function DownloadsView() {
                     onOpenLocation={handleOpenLocation}
                     formatSize={formatSize}
                     formatSpeed={formatSpeed}
+                    formatEta={formatEta}
                     getStatusIcon={getStatusIcon}
                   />
                 ))}
@@ -361,6 +470,7 @@ function DownloadItem({
   onCancel,
   onOpenLocation,
   formatSize,
+  formatEta,
   getProgress,
   getStatusIcon,
 }: {
@@ -370,10 +480,16 @@ function DownloadItem({
   onCancel: (id: string) => void;
   onOpenLocation: (path: string) => void;
   formatSize: (bytes: number) => string;
+  formatEta: (seconds: number) => string;
   getProgress: (downloaded: number, total: number) => number;
   getStatusIcon: (status: string) => React.ReactNode;
 }) {
   const progress = getProgress(download.downloaded, download.size);
+  
+  // Calculate speed and ETA - show 0 when paused
+  const speed = download.status === "paused" ? 0 : (download.speed || 0);
+  const remaining = download.size - download.downloaded;
+  const eta = speed > 0 ? remaining / speed : 0;
 
   return (
     <div className="bg-neutral-900 rounded-lg p-4 border border-neutral-800">
@@ -450,7 +566,13 @@ function DownloadItem({
             ? (download.extractStatus || "Extracting...") 
             : `${formatSize(download.downloaded)} / ${formatSize(download.size)}`}
         </span>
-        {download.speed && <span>{formatSize(download.speed)}/s</span>}
+        <div className="flex items-center gap-3">
+          {download.status === "downloading" && eta > 0 && (
+            <span>ETA: {formatEta(eta)}</span>
+          )}
+          {download.status === "downloading" && <span>{formatSize(speed)}/s</span>}
+          {download.status === "paused" && <span className="text-yellow-500">Paused</span>}
+        </div>
       </div>
     </div>
   );
@@ -464,6 +586,7 @@ function TorrentItem({
   onOpenLocation,
   formatSize,
   formatSpeed,
+  formatEta,
   getStatusIcon,
 }: {
   torrent: TorrentInfo;
@@ -473,9 +596,16 @@ function TorrentItem({
   onOpenLocation: (path: string) => void;
   formatSize: (bytes: number) => string;
   formatSpeed: (bytes: number) => string;
+  formatEta: (seconds: number) => string;
   getStatusIcon: (status: string) => React.ReactNode;
 }) {
   const progress = Math.round(torrent.progress * 100);
+  
+  // Show 0 speed when paused
+  const dlSpeed = torrent.status === "paused" ? 0 : torrent.downloadSpeed;
+  const ulSpeed = torrent.status === "paused" ? 0 : torrent.uploadSpeed;
+  const remaining = torrent.size - torrent.downloaded;
+  const eta = dlSpeed > 0 ? remaining / dlSpeed : 0;
 
   return (
     <div className="bg-neutral-900 rounded-lg p-4 border border-neutral-800">
@@ -489,16 +619,19 @@ function TorrentItem({
         <div className="flex items-center gap-4 text-sm text-neutral-400">
           <div className="flex items-center gap-1">
             <ArrowDown className="w-3 h-3 text-lime-500" />
-            <span>{formatSpeed(torrent.downloadSpeed)}</span>
+            <span>{formatSpeed(dlSpeed)}</span>
           </div>
           <div className="flex items-center gap-1">
             <ArrowUp className="w-3 h-3 text-blue-500" />
-            <span>{formatSpeed(torrent.uploadSpeed)}</span>
+            <span>{formatSpeed(ulSpeed)}</span>
           </div>
           <div className="flex items-center gap-1">
             <Users className="w-3 h-3" />
-            <span>{torrent.peers}</span>
+            <span>{torrent.status === "paused" ? 0 : torrent.peers}</span>
           </div>
+          {torrent.status === "downloading" && eta > 0 && (
+            <span className="text-neutral-500">ETA: {formatEta(eta)}</span>
+          )}
         </div>
         <div className="flex items-center gap-2 ml-4">
           {torrent.status === "downloading" && (

@@ -74,8 +74,16 @@ export function App() {
           // `addTorrentFile` will cause the main process to emit `torrent-added`.
           // We listen for that event above and add it to state there.
           await window.limbo.addTorrentFile(filePath);
-        } catch (err) {
+        } catch (err: any) {
           console.error("Failed to add torrent file:", err);
+          // Dispatch event to show VPN warning in downloads view
+          if (err?.message?.includes("VPN_REQUIRED")) {
+            setCurrentView("downloads");
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('switch-to-torrents'));
+              window.dispatchEvent(new CustomEvent('vpn-required'));
+            }, 100);
+          }
         }
       });
 

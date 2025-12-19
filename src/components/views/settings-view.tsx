@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Monitor,
   Share2,
+  Power,
 } from "lucide-react";
 
 export function SettingsView() {
@@ -128,6 +129,23 @@ export function SettingsView() {
                 }
               />
             </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Require VPN for Torrents</p>
+                <p className="text-sm text-neutral-500">
+                  Block torrent downloads when no VPN is detected. Helps protect your privacy.
+                </p>
+              </div>
+              <Switch
+                checked={localSettings.requireVpn}
+                onCheckedChange={(checked: boolean) =>
+                  setLocalSettings({
+                    ...localSettings,
+                    requireVpn: checked,
+                  })
+                }
+              />
+            </div>
           </div>
         </section>
 
@@ -227,7 +245,7 @@ export function SettingsView() {
               <div>
                 <p className="font-medium">Reset Bookmarks</p>
                 <p className="text-sm text-neutral-500">
-                  Restore default bookmarks (1337x, FitGirl Repacks)
+                  Restore default bookmark (Internet Archive)
                 </p>
               </div>
               <Button
@@ -243,6 +261,41 @@ export function SettingsView() {
               >
                 <RotateCcw className="w-4 h-4" />
                 Reset
+              </Button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Import Bookmarks</p>
+                <p className="text-sm text-neutral-500">Load bookmarks from a JSON file</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  if (!window.limbo) return;
+                  const bookmarks = await window.limbo.importBookmarks();
+                  if (bookmarks) useAppStore.getState().setBookmarks(bookmarks);
+                }}
+              >
+                Import
+              </Button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Export Bookmarks</p>
+                <p className="text-sm text-neutral-500">Save your bookmarks as a JSON file</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  if (!window.limbo) return;
+                  await window.limbo.exportBookmarks();
+                }}
+              >
+                Export
               </Button>
             </div>
           </div>
@@ -275,6 +328,33 @@ export function SettingsView() {
             <p className="text-xs text-amber-500">
               ⚠️ Requires app restart to take effect
             </p>
+          </div>
+        </section>
+
+        {/* Startup Settings */}
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Power className="w-5 h-5" />
+            Startup
+          </h2>
+          <div className="space-y-4 bg-neutral-900 rounded-lg p-4 border border-neutral-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Start on Boot</p>
+                <p className="text-sm text-neutral-500">
+                  Automatically launch Limbo when your computer starts.
+                </p>
+              </div>
+              <Switch
+                checked={localSettings.startOnBoot}
+                onCheckedChange={(checked: boolean) =>
+                  setLocalSettings({
+                    ...localSettings,
+                    startOnBoot: checked,
+                  })
+                }
+              />
+            </div>
           </div>
         </section>
 

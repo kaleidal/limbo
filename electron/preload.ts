@@ -13,6 +13,8 @@ export interface LimboAPI {
   removeBookmark: (id: string) => Promise<Bookmark[]>;
   updateBookmark: (bookmark: Bookmark) => Promise<Bookmark[]>;
   resetBookmarks: () => Promise<Bookmark[]>;
+  exportBookmarks: () => Promise<string | null>;
+  importBookmarks: () => Promise<Bookmark[] | null>;
 
   // Library
   getLibrary: () => Promise<LibraryItem[]>;
@@ -29,6 +31,8 @@ export interface LimboAPI {
   resumeDownload: (id: string) => Promise<void>;
   cancelDownload: (id: string) => Promise<Download[]>;
   clearCompletedDownloads: () => Promise<Download[]>;
+  pauseAllDownloads: () => Promise<void>;
+  resumeAllDownloads: () => Promise<void>;
 
   // Torrents
   getTorrents: () => Promise<TorrentInfo[]>;
@@ -40,6 +44,9 @@ export interface LimboAPI {
   isTorrentSupported: () => Promise<boolean>;
   getStreamServerPort: () => Promise<number>;
   getTorrentFiles: (infoHash: string) => Promise<TorrentFile[]>;
+  pauseAllTorrents: () => Promise<void>;
+  resumeAllTorrents: () => Promise<void>;
+  checkVpnStatus: () => Promise<boolean>;
 
   // Debrid
   isDebridConfigured: () => Promise<boolean>;
@@ -114,6 +121,9 @@ interface Settings {
   downloadPath: string;
   maxConcurrentDownloads: number;
   hardwareAcceleration: boolean;
+  enableSeeding: boolean;
+  startOnBoot: boolean;
+  requireVpn: boolean;
   debrid: {
     service: "realdebrid" | "alldebrid" | "premiumize" | null;
     apiKey: string;
@@ -149,6 +159,8 @@ const api: LimboAPI = {
   removeBookmark: (id) => ipcRenderer.invoke("remove-bookmark", id),
   updateBookmark: (bookmark) => ipcRenderer.invoke("update-bookmark", bookmark),
   resetBookmarks: () => ipcRenderer.invoke("reset-bookmarks"),
+  exportBookmarks: () => ipcRenderer.invoke("export-bookmarks"),
+  importBookmarks: () => ipcRenderer.invoke("import-bookmarks"),
 
   // Library
   getLibrary: () => ipcRenderer.invoke("get-library"),
@@ -166,6 +178,8 @@ const api: LimboAPI = {
   resumeDownload: (id) => ipcRenderer.invoke("resume-download", id),
   cancelDownload: (id) => ipcRenderer.invoke("cancel-download", id),
   clearCompletedDownloads: () => ipcRenderer.invoke("clear-completed-downloads"),
+  pauseAllDownloads: () => ipcRenderer.invoke("pause-all-downloads"),
+  resumeAllDownloads: () => ipcRenderer.invoke("resume-all-downloads"),
 
   // Torrents
   getTorrents: () => ipcRenderer.invoke("get-torrents"),
@@ -177,6 +191,9 @@ const api: LimboAPI = {
   isTorrentSupported: () => ipcRenderer.invoke("is-torrent-supported"),
   getStreamServerPort: () => ipcRenderer.invoke("get-stream-server-port"),
   getTorrentFiles: (infoHash) => ipcRenderer.invoke("get-torrent-files", infoHash),
+  pauseAllTorrents: () => ipcRenderer.invoke("pause-all-torrents"),
+  resumeAllTorrents: () => ipcRenderer.invoke("resume-all-torrents"),
+  checkVpnStatus: () => ipcRenderer.invoke("check-vpn-status"),
 
   // Debrid
   isDebridConfigured: () => ipcRenderer.invoke("is-debrid-configured"),
