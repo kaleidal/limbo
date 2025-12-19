@@ -26,12 +26,12 @@ async function generateIcons() {
     console.log(`  Generated icon-${size}.png`);
   }
 
-  // Generate main icon.png (256x256 for Linux)
+  // Generate main icon.png (must be >= 512x512 for macOS builds)
   await sharp(svgBuffer)
-    .resize(256, 256)
+    .resize(512, 512)
     .png()
     .toFile(path.join(publicDir, 'icon.png'));
-  console.log('  Generated icon.png (256x256)');
+  console.log('  Generated icon.png (512x512)');
 
   // For Windows ICO, we need to use a different approach
   // electron-builder can use a 256x256 PNG and convert it
