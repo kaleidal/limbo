@@ -39,7 +39,5 @@ jobs:
       - name: Rebuild node-datachannel
         run: npm rebuild node-datachannel
 
-      - name: Build and publish (electron-builder)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist -- --publish always
+      - name: Build (electron-builder)
+        run: npm run build:electron
