@@ -52,6 +52,7 @@ export interface DownloadProgress {
   downloaded: number;
   total: number;
   status: string;
+  speed?: number;
   extractProgress?: number;
   extractStatus?: string;
 }

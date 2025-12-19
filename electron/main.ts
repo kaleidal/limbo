@@ -831,7 +831,60 @@ const store = new Store<StoreSchema>({
 
 let mainWindow: BrowserWindow | null = null;
 const activeDownloads = new Map<string, DownloadItem>();
+const downloadSpeedTrackers = new Map<
+  string,
+  { lastBytes: number; lastTimeMs: number; emaBps: number }
+>();
 let resumeInProgress = false;
+
+function updateSpeedTracker(downloadId: string, receivedBytes: number, paused: boolean): number {
+  const now = Date.now();
+  const prev = downloadSpeedTrackers.get(downloadId);
+
+  if (!prev) {
+    downloadSpeedTrackers.set(downloadId, {
+      lastBytes: receivedBytes,
+      lastTimeMs: now,
+      emaBps: 0,
+    });
+    return 0;
+  }
+
+  if (paused) {
+    // Reset timing baseline while paused so we don't spike on resume.
+    downloadSpeedTrackers.set(downloadId, {
+      lastBytes: receivedBytes,
+      lastTimeMs: now,
+      emaBps: 0,
+    });
+    return 0;
+  }
+
+  const dtSec = (now - prev.lastTimeMs) / 1000;
+  const deltaBytes = receivedBytes - prev.lastBytes;
+
+  // Too little time elapsed or bytes went backwards (shouldn't happen), just update baseline.
+  if (dtSec <= 0.25 || deltaBytes < 0) {
+    downloadSpeedTrackers.set(downloadId, {
+      lastBytes: receivedBytes,
+      lastTimeMs: now,
+      emaBps: prev.emaBps,
+    });
+    return Math.max(0, Math.round(prev.emaBps));
+  }
+
+  const instBps = Math.max(0, deltaBytes / dtSec);
+  const alpha = 0.2;
+  const emaBps = prev.emaBps === 0 ? instBps : prev.emaBps * (1 - alpha) + instBps * alpha;
+
+  downloadSpeedTrackers.set(downloadId, {
+    lastBytes: receivedBytes,
+    lastTimeMs: now,
+    emaBps,
+  });
+
+  return Math.max(0, Math.round(emaBps));
+}
 
 function createWindow() {
   // Use PNG icon for all platforms (electron-builder will convert for production)
@@ -926,6 +979,13 @@ function createWindow() {
     if (!item.getSavePath()) item.setSavePath(savePath);
     activeDownloads.set(downloadId, item);
 
+    // Initialize speed tracking for this download (including resumes).
+    downloadSpeedTrackers.set(downloadId, {
+      lastBytes: item.getReceivedBytes(),
+      lastTimeMs: Date.now(),
+      emaBps: 0,
+    });
+
     const download: Download = {
       id: downloadId,
       filename: filename,
@@ -934,6 +994,7 @@ function createWindow() {
       size: item.getTotalBytes(),
       downloaded: 0,
       status: "downloading",
+      speed: 0,
     };
 
     // Add to store (or reuse existing entry if resuming)
@@ -958,6 +1019,7 @@ function createWindow() {
         downloaded: item.getReceivedBytes(),
         total: item.getTotalBytes(),
         status: "downloading",
+        speed: downloads[existingIdx].speed || 0,
       });
     }
 
@@ -966,10 +1028,15 @@ function createWindow() {
       const idx = downloads.findIndex((d) => d.id === downloadId);
       if (idx !== -1) {
         const prevStatus = downloads[idx].status;
-        downloads[idx].downloaded = item.getReceivedBytes();
+        const received = item.getReceivedBytes();
+        downloads[idx].downloaded = received;
         // Electron's `state` can remain "progressing" even while the item is paused.
         // Use `item.isPaused()` as the source of truth to avoid UI flipping back to "downloading".
-        downloads[idx].status = item.isPaused() ? "paused" : (state === "progressing" ? "downloading" : "paused");
+        const paused = item.isPaused();
+        downloads[idx].status = paused ? "paused" : (state === "progressing" ? "downloading" : "paused");
+
+        // Compute speed (bytes/sec) from received-bytes deltas.
+        downloads[idx].speed = updateSpeedTracker(downloadId, received, paused);
 
         if (prevStatus !== downloads[idx].status) {
           console.log(`[Download] ${downloadId} status changed: ${prevStatus} -> ${downloads[idx].status}`);
@@ -983,20 +1050,23 @@ function createWindow() {
         store.set("downloads", downloads);
         mainWindow?.webContents.send("download-progress", {
           id: downloadId,
-          downloaded: item.getReceivedBytes(),
+          downloaded: received,
           total: item.getTotalBytes(),
           status: downloads[idx].status,
+          speed: downloads[idx].speed || 0,
         });
       }
     });
 
     item.once("done", (event, state) => {
       activeDownloads.delete(downloadId);
+      downloadSpeedTrackers.delete(downloadId);
       const downloads = store.get("downloads");
       const idx = downloads.findIndex((d) => d.id === downloadId);
       if (idx !== -1) {
         downloads[idx].status = state === "completed" ? "completed" : "error";
         downloads[idx].downloaded = item.getReceivedBytes();
+        downloads[idx].speed = 0;
 
         if (state === "completed") {
           downloads[idx].resumeData = undefined;

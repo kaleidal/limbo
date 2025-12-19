@@ -36,6 +36,7 @@ export function App() {
           downloaded: progress.downloaded,
           size: progress.total,
           status: progress.status as any,
+          speed: progress.speed,
           extractProgress: progress.extractProgress,
           extractStatus: progress.extractStatus,
         });
