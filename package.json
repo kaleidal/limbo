@@ -1,8 +1,8 @@
 {
   "name": "limbo",
   "private": true,
-  "version": "1.0.2",
-  "description": "A pirated software manager with integrated browser, download manager, and torrent client",
+  "version": "1.0.3",
+  "description": "A software manager with integrated browser, download manager, and torrent client",
   "main": "dist-electron/main.js",
   "type": "module",
   "author": {

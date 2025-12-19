@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import type { TorrentInfo } from "@/types/electron.d";
 
 export function DownloadsView() {
-  const { downloads, torrents, setTorrents, addTorrent, updateTorrent } = useAppStore();
+  const { downloads, torrents, setTorrents, updateTorrent } = useAppStore();
   const [activeTab, setActiveTab] = useState<"downloads" | "torrents">("downloads");
   const [urlInput, setUrlInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
@@ -87,8 +87,8 @@ export function DownloadsView() {
       // Check if it's a magnet link
       if (urlInput.startsWith("magnet:")) {
         try {
-          const torrent = await window.limbo.addTorrent(urlInput);
-          addTorrent(torrent);
+          // Main process will emit `torrent-added` which App.tsx listens for.
+          await window.limbo.addTorrent(urlInput);
           setActiveTab("torrents");
         } catch (err) {
           console.error("Failed to add torrent:", err);

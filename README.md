@@ -1,13 +1,15 @@
 ﻿# Limbo
 
-Limbo is a Windows/macOS/Linux desktop app built with Electron + React that combines:
+Limbo is a Windows/macOS/Linux desktop app built with Electron + React and is a software manager with integrated browser, download manager, and torrent client.
 
-- Download manager
-- Integrated browser with bookmarks
-- Library view for downloaded content
-- Optional magnet/torrent handling (via WebTorrent)
+## Legal Notice
 
-This project is intended for legitimate use cases only (e.g., downloading content you have rights/permission to access).
+Limbo is a general-purpose download management tool. It supports:
+- Direct HTTP/HTTPS downloads
+- BitTorrent protocol (for legal torrents like Linux distributions, open source software, public domain media)
+- Organization of downloaded files in a library view
+
+**Users are solely responsible for ensuring they have legal rights to download and possess any content accessed through this application.** This tool does not host, link to, or endorse any infringing content.
 
 ## Tech
 

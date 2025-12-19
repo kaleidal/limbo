@@ -553,15 +553,9 @@ const store = new Store<StoreSchema>({
     bookmarks: [
       {
         id: "1",
-        name: "1377x",
-        url: "https://1377x.to",
-        favicon: "https://www.google.com/s2/favicons?domain=1377x.to&sz=64",
-      },
-      {
-        id: "2",
-        name: "FitGirl Repacks",
-        url: "https://fitgirl-repacks.site",
-        favicon: "https://www.google.com/s2/favicons?domain=fitgirl-repacks.site&sz=64",
+        name: "Internet Archive",
+        url: "https://archive.org",
+        favicon: "https://www.google.com/s2/favicons?domain=archive.org&sz=64",
       },
     ],
     library: [],
@@ -973,15 +967,9 @@ ipcMain.handle("reset-bookmarks", () => {
   const defaults: Bookmark[] = [
     {
       id: "1",
-      name: "1377x",
-      url: "https://1377x.to",
-      favicon: "https://www.google.com/s2/favicons?domain=1377x.to&sz=64",
-    },
-    {
-      id: "2",
-      name: "FitGirl Repacks",
-      url: "https://fitgirl-repacks.site",
-      favicon: "https://www.google.com/s2/favicons?domain=fitgirl-repacks.site&sz=64",
+      name: "Internet Archive",
+      url: "https://archive.org",
+      favicon: "https://www.google.com/s2/favicons?domain=archive.org&sz=64",
     },
   ];
   store.set("bookmarks", defaults);

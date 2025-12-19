@@ -24,6 +24,7 @@ export function Sidebar() {
     setActiveBookmark,
     setIsAddBookmarkOpen,
     downloads,
+    torrents,
   } = useAppStore();
 
   const [hoveredBookmark, setHoveredBookmark] = useState<string | null>(null);
@@ -52,6 +53,12 @@ export function Sidebar() {
   const activeDownloads = downloads.filter(
     (d) => d.status === "downloading" || d.status === "pending"
   );
+
+  const activeTorrents = torrents.filter(
+    (t) => t.status === "downloading" || t.status === "paused"
+  );
+
+  const activeTransfersCount = activeDownloads.length + activeTorrents.length;
 
   const handleRemoveBookmark = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -82,14 +89,14 @@ export function Sidebar() {
         icon={
           <div className="relative">
             <Download className="w-5 h-5" />
-            {activeDownloads.length > 0 && (
+            {activeTransfersCount > 0 && (
               <span className={cn(
                 "absolute -top-1 -right-1 w-4 h-4 text-xs font-bold rounded-full flex items-center justify-center",
                 currentView === "downloads"
                   ? "bg-neutral-900 text-lime-500 ring-1 ring-lime-500"
                   : "bg-lime-500 text-neutral-900"
               )}>
-                {activeDownloads.length}
+                {activeTransfersCount}
               </span>
             )}
           </div>
