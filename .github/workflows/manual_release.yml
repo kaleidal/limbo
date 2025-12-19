@@ -1,0 +1,36 @@
+name: Manual Build and Release
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [blacksmith-4vcpu-windows-2025, blacksmith-4vcpu-ubuntu-2404, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Electron Rebuild
+        run: npx electron-rebuild
+
+      - name: Rebuild node-datachannel
+        run: npm rebuild node-datachannel
+
+      - name: Build and publish (electron-builder)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist -- --publish always
