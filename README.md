@@ -71,4 +71,4 @@ If it still fails:
 
 ## License
 
-No license has been specified yet.
+This project is licensed under the MIT license.

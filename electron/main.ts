@@ -296,6 +296,24 @@ async function initWebTorrent() {
         if (msg.ok) {
           streamServerPort = msg.streamServerPort || 0;
           console.log(`Torrent worker ready. Stream server on http://127.0.0.1:${streamServerPort}`);
+
+          // Resume torrents that were downloading last run (best-effort)
+          try {
+            const settings = store.get("settings");
+            const torrents = store.get("torrents");
+            for (const t of torrents) {
+              if (t.status !== "downloading") continue;
+              if (!t.magnetUri) continue;
+              activeTorrentIds.add(t.id);
+              callTorrentWorker({
+                type: "add-magnet",
+                torrentId: t.id,
+                magnetUri: t.magnetUri,
+                downloadPath: settings.downloadPath,
+                announce: publicTrackers,
+              }).catch(() => {});
+            }
+          } catch {}
         } else {
           console.warn("Torrent worker failed to initialize.", msg.error);
         }
@@ -503,6 +521,7 @@ interface Download {
   parts?: DownloadPart[];
   extractProgress?: number;
   extractStatus?: string;
+  resumeData?: string;
 }
 
 interface DownloadPart {
@@ -576,6 +595,7 @@ const store = new Store<StoreSchema>({
 
 let mainWindow: BrowserWindow | null = null;
 const activeDownloads = new Map<string, DownloadItem>();
+let resumeInProgress = false;
 
 function createWindow() {
   // Use PNG icon for all platforms (electron-builder will convert for production)
@@ -629,17 +649,22 @@ function createWindow() {
   });
 
   // Download handler function
-  const handleDownload = (event: Electron.Event, item: Electron.DownloadItem, webContents: Electron.WebContents) => {
-    const downloadId = uuidv4();
+  const handleDownload = (
+    event: Electron.Event,
+    item: Electron.DownloadItem,
+    webContents: Electron.WebContents,
+    existingDownloadId?: string
+  ) => {
+    const downloadId = existingDownloadId ?? uuidv4();
     const settings = store.get("settings");
-    const savePath = path.join(settings.downloadPath, item.getFilename());
+    const savePath = item.getSavePath() || path.join(settings.downloadPath, item.getFilename());
 
     // Ensure download directory exists
     if (!fs.existsSync(settings.downloadPath)) {
       fs.mkdirSync(settings.downloadPath, { recursive: true });
     }
 
-    item.setSavePath(savePath);
+    if (!item.getSavePath()) item.setSavePath(savePath);
     activeDownloads.set(downloadId, item);
 
     const download: Download = {
@@ -652,13 +677,30 @@ function createWindow() {
       status: "downloading",
     };
 
-    // Add to store
+    // Add to store (or reuse existing entry if resuming)
     const downloads = store.get("downloads");
-    downloads.push(download);
-    store.set("downloads", downloads);
-
-    // Notify renderer
-    mainWindow?.webContents.send("download-started", download);
+    const existingIdx = downloads.findIndex((d) => d.id === downloadId);
+    if (existingIdx === -1) {
+      downloads.push(download);
+      store.set("downloads", downloads);
+      mainWindow?.webContents.send("download-started", download);
+    } else {
+      downloads[existingIdx] = {
+        ...downloads[existingIdx],
+        filename: download.filename,
+        url: download.url,
+        path: download.path,
+        size: download.size,
+        status: "downloading" as any,
+      };
+      store.set("downloads", downloads);
+      mainWindow?.webContents.send("download-progress", {
+        id: downloadId,
+        downloaded: item.getReceivedBytes(),
+        total: item.getTotalBytes(),
+        status: "downloading",
+      });
+    }
 
     item.on("updated", (event, state) => {
       const downloads = store.get("downloads");
@@ -666,6 +708,12 @@ function createWindow() {
       if (idx !== -1) {
         downloads[idx].downloaded = item.getReceivedBytes();
         downloads[idx].status = state === "progressing" ? "downloading" : "paused";
+
+        try {
+          const resumeData = (item as any).getResumeData?.();
+          downloads[idx].resumeData = resumeData?.toString("base64");
+        } catch {}
+
         store.set("downloads", downloads);
         mainWindow?.webContents.send("download-progress", {
           id: downloadId,
@@ -683,6 +731,17 @@ function createWindow() {
       if (idx !== -1) {
         downloads[idx].status = state === "completed" ? "completed" : "error";
         downloads[idx].downloaded = item.getReceivedBytes();
+
+        if (state === "completed") {
+          downloads[idx].resumeData = undefined;
+        } else {
+          // Keep resumeData if present so we can continue after relaunch.
+          try {
+            const resumeData = (item as any).getResumeData?.();
+            downloads[idx].resumeData = resumeData?.toString("base64") || downloads[idx].resumeData;
+          } catch {}
+        }
+
         store.set("downloads", downloads);
 
         // Add to library if completed
@@ -795,6 +854,46 @@ function createWindow() {
   // Attach download handler to both sessions
   ses.on("will-download", handleDownload);
   session.defaultSession.on("will-download", handleDownload);
+
+  // Resume downloads that were in-progress last run (best-effort)
+  const resumePendingDownloads = () => {
+    if (resumeInProgress) return;
+    resumeInProgress = true;
+
+    const downloads = store.get("downloads");
+    const toResume = downloads.filter(
+      (d) => (d.status === "downloading" || d.status === "pending") && !!d.resumeData
+    );
+    if (toResume.length === 0) {
+      resumeInProgress = false;
+      return;
+    }
+
+    for (const d of toResume) {
+      try {
+        const buf = Buffer.from(d.resumeData!, "base64");
+        // Try the persistent session first (covers webview-initiated downloads).
+        let item: DownloadItem | null = null;
+        try {
+          item = (ses as any).createInterruptedDownload(buf);
+        } catch {
+          item = (session.defaultSession as any).createInterruptedDownload(buf);
+        }
+        if (item) {
+          handleDownload({} as any, item as any, mainWindow!.webContents, d.id);
+        }
+      } catch (err) {
+        console.warn("Failed to resume download", d.id, err);
+      }
+    }
+
+    resumeInProgress = false;
+  };
+
+  // Run after window load so renderer is ready to receive events.
+  mainWindow.webContents.once("did-finish-load", () => {
+    resumePendingDownloads();
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;

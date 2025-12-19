@@ -8,6 +8,8 @@ let streamServerPort = 0;
 let enableSeeding = false;
 let publicTrackers = [];
 const torrentsById = new Map();
+const torrentMetaById = new Map();
+const pausedTorrentMetaById = new Map();
 function post(msg) {
     parentPort?.postMessage(msg);
 }
@@ -165,6 +167,14 @@ function attachTorrentLifecycle(torrentId, torrent) {
     });
     const sendMetadata = () => {
         const name = torrent.name || "Loading torrent…";
+        const meta = torrentMetaById.get(torrentId);
+        if (meta) {
+            const nextMagnet = torrent.magnetURI || meta.magnetUri;
+            torrentMetaById.set(torrentId, {
+                ...meta,
+                magnetUri: nextMagnet,
+            });
+        }
         post({
             type: "event",
             event: "torrent-metadata",
@@ -209,8 +219,28 @@ function attachTorrentLifecycle(torrentId, torrent) {
             }
             catch { }
             torrentsById.delete(torrentId);
+            torrentMetaById.delete(torrentId);
+            pausedTorrentMetaById.delete(torrentId);
         }
     });
+}
+function safeStopTorrent(torrent) {
+    if (!torrent)
+        return;
+    try {
+        if (torrent.__limboProgressInterval) {
+            clearInterval(torrent.__limboProgressInterval);
+            torrent.__limboProgressInterval = null;
+        }
+    }
+    catch { }
+    try {
+        if (torrent.__limboNoUploadInterval) {
+            clearInterval(torrent.__limboNoUploadInterval);
+            torrent.__limboNoUploadInterval = null;
+        }
+    }
+    catch { }
 }
 async function handleInit(msg) {
     enableSeeding = msg.enableSeeding;
@@ -251,6 +281,12 @@ parentPort?.on("message", async (msg) => {
                     announce: announce?.length ? announce : publicTrackers,
                 });
                 torrentsById.set(torrentId, torrent);
+                torrentMetaById.set(torrentId, {
+                    magnetUri,
+                    downloadPath,
+                    announce: announce?.length ? announce : publicTrackers,
+                });
+                pausedTorrentMetaById.delete(torrentId);
                 applyTorrentUploadPolicy(torrent, enableSeeding);
                 attachTorrentLifecycle(torrentId, torrent);
                 respondOk(requestId);
@@ -266,37 +302,82 @@ parentPort?.on("message", async (msg) => {
                     announce: announce?.length ? announce : publicTrackers,
                 });
                 torrentsById.set(torrentId, torrent);
+                torrentMetaById.set(torrentId, {
+                    magnetUri: "",
+                    downloadPath,
+                    announce: announce?.length ? announce : publicTrackers,
+                });
+                pausedTorrentMetaById.delete(torrentId);
                 applyTorrentUploadPolicy(torrent, enableSeeding);
                 attachTorrentLifecycle(torrentId, torrent);
                 respondOk(requestId);
                 return;
             }
             case "pause": {
-                const torrent = torrentsById.get(msg.torrentId);
-                torrent?.pause?.();
+                const torrentId = msg.torrentId;
+                const torrent = torrentsById.get(torrentId);
+                const meta = torrentMetaById.get(torrentId);
+                const magnetUri = torrent?.magnetURI || meta?.magnetUri || "";
+                if (!magnetUri) {
+                    // If we don't have a magnet yet, best effort pause.
+                    torrent?.pause?.();
+                    respondOk(msg.requestId);
+                    return;
+                }
+                if (meta) {
+                    pausedTorrentMetaById.set(torrentId, { ...meta, magnetUri });
+                }
+                else {
+                    pausedTorrentMetaById.set(torrentId, {
+                        magnetUri,
+                        downloadPath: "",
+                        announce: publicTrackers,
+                    });
+                }
+                safeStopTorrent(torrent);
+                try {
+                    torrent?.destroy?.({ destroyStore: false });
+                }
+                catch { }
+                torrentsById.delete(torrentId);
+                torrentMetaById.delete(torrentId);
                 respondOk(msg.requestId);
                 return;
             }
             case "resume": {
-                const torrent = torrentsById.get(msg.torrentId);
-                torrent?.resume?.();
+                const torrentId = msg.torrentId;
+                const existing = torrentsById.get(torrentId);
+                if (existing) {
+                    existing.resume?.();
+                    applyTorrentUploadPolicy(existing, enableSeeding);
+                    respondOk(msg.requestId);
+                    return;
+                }
+                const meta = pausedTorrentMetaById.get(torrentId);
+                if (!meta || !meta.magnetUri) {
+                    throw new Error("Torrent cannot be resumed yet (missing magnet metadata)");
+                }
+                const torrent = torrentClient.add(meta.magnetUri, {
+                    path: meta.downloadPath,
+                    announce: meta.announce?.length ? meta.announce : publicTrackers,
+                });
+                torrentsById.set(torrentId, torrent);
+                torrentMetaById.set(torrentId, meta);
                 applyTorrentUploadPolicy(torrent, enableSeeding);
+                attachTorrentLifecycle(torrentId, torrent);
+                pausedTorrentMetaById.delete(torrentId);
                 respondOk(msg.requestId);
                 return;
             }
             case "remove": {
                 const torrent = torrentsById.get(msg.torrentId);
                 if (torrent) {
-                    try {
-                        if (torrent.__limboProgressInterval) {
-                            clearInterval(torrent.__limboProgressInterval);
-                            torrent.__limboProgressInterval = null;
-                        }
-                    }
-                    catch { }
+                    safeStopTorrent(torrent);
                     torrent.destroy?.({ destroyStore: msg.deleteFiles });
                     torrentsById.delete(msg.torrentId);
+                    torrentMetaById.delete(msg.torrentId);
                 }
+                pausedTorrentMetaById.delete(msg.torrentId);
                 respondOk(msg.requestId);
                 return;
             }
