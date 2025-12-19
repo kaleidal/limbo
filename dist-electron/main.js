@@ -6,6 +6,9 @@ import { fileURLToPath } from "url";
 import { Worker } from "worker_threads";
 import Store from "electron-store";
 import { v4 as uuidv4 } from "uuid";
+import electronUpdater from "electron-updater";
+import log from "electron-log";
+const { autoUpdater } = electronUpdater;
 // ESM compatibility
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +16,42 @@ const __dirname = path.dirname(__filename);
 function isExtractableArchive(filename) {
     const ext = path.extname(filename).toLowerCase();
     return ['.zip', '.rar', '.7z'].includes(ext);
+}
+if (process.platform === 'win32') {
+    app.setAppUserModelId('al.kaleid.limbo');
+}
+function initAutoUpdater() {
+    if (!app.isPackaged)
+        return;
+    try {
+        autoUpdater.logger = log;
+        log.transports.file.level = "info";
+        autoUpdater.on("checking-for-update", () => log.info("Checking for updates..."));
+        autoUpdater.on("update-available", (info) => log.info("Update available", info));
+        autoUpdater.on("update-not-available", (info) => log.info("No update available", info));
+        autoUpdater.on("error", (err) => log.error("Auto-updater error", err));
+        autoUpdater.on("download-progress", (progress) => log.info("Update download progress", progress));
+        autoUpdater.on("update-downloaded", async () => {
+            const result = await dialog.showMessageBox({
+                type: "info",
+                title: "Update ready",
+                message: "An update has been downloaded.",
+                detail: "Restart Limbo to apply it now.",
+                buttons: ["Restart", "Later"],
+                defaultId: 0,
+                cancelId: 1,
+            });
+            if (result.response === 0) {
+                autoUpdater.quitAndInstall();
+            }
+        });
+        autoUpdater.checkForUpdates().catch((err) => {
+            log.error("Auto-updater check failed", err);
+        });
+    }
+    catch (err) {
+        log.error("Failed to initialize auto-updater", err);
+    }
 }
 // Auto-extract function using worker thread (non-blocking)
 function autoExtractArchiveAsync(filePath, downloadId, onProgress, onComplete) {
@@ -566,6 +605,7 @@ function isDownloadableUrl(text) {
 app.whenReady().then(async () => {
     await initWebTorrent();
     createWindow();
+    initAutoUpdater();
     // Handle magnet links opened from OS
     app.on('open-url', (event, url) => {
         event.preventDefault();
