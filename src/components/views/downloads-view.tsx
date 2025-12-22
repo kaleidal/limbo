@@ -50,6 +50,7 @@ export function DownloadsView() {
   }, []);
 
   const formatSize = useCallback((bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes < 0) return "--";
     if (bytes === 0) return "0 B";
     const k = 1024;
     const sizes = ["B", "KB", "MB", "GB", "TB"];
@@ -75,7 +76,8 @@ export function DownloadsView() {
   }, []);
 
   const getProgress = useCallback((downloaded: number, total: number) => {
-    if (total === 0) return 0;
+    if (!Number.isFinite(downloaded) || downloaded < 0) return 0;
+    if (!Number.isFinite(total) || total <= 0) return 0;
     return Math.round((downloaded / total) * 100);
   }, []);
 
@@ -589,7 +591,11 @@ const DownloadItem = memo(function DownloadItem({
         <span>
           {download.status === "extracting" 
             ? (download.extractStatus || "Extracting...") 
-            : `${formatSize(download.downloaded)} / ${formatSize(download.size)}`}
+            : `${formatSize(download.downloaded)} / ${formatSize(download.size)}${
+                download.status === "completed" && download.extractStatus
+                  ? ` • ${download.extractStatus}`
+                  : ""
+              }`}
         </span>
         <div className="flex items-center gap-3">
           {download.status === "downloading" && eta > 0 && (

@@ -9,7 +9,22 @@ export function registerDownloadHandlers(
   getMainWindow: () => BrowserWindow | null,
   getActiveDownloads: () => Map<string, Electron.DownloadItem>
 ) {
-  ipcMain.handle("get-downloads", () => store.get("downloads"));
+  ipcMain.handle("get-downloads", () => {
+    const downloads = store.get("downloads");
+    return downloads.map((d) => ({
+      id: d.id,
+      filename: d.filename,
+      url: d.url,
+      path: d.path,
+      size: d.size,
+      downloaded: d.received,
+      status: d.status,
+      speed: d.speed,
+      eta: d.eta,
+      extractProgress: d.extractProgress,
+      extractStatus: d.extractStatus,
+    }));
+  });
 
   ipcMain.handle("pause-download", (_, id: string) => {
     const item = getActiveDownloads().get(id);

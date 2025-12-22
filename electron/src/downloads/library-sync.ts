@@ -22,7 +22,7 @@ export function addDownloadToLibrary(download: Download): LibraryItem | null {
       size: stats.isDirectory() ? getFolderSize(download.path) : stats.size,
       dateAdded: new Date().toISOString(),
       type: stats.isDirectory() ? "folder" : getMimeType(download.filename),
-      category: detectCategory(download.filename),
+      category: detectCategory(download.path),
     };
 
     library.push(item);

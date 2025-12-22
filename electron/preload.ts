@@ -6,6 +6,7 @@ export interface LimboAPI {
   minimize: () => void;
   maximize: () => void;
   close: () => void;
+  openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
 
   // Bookmarks
   getBookmarks: () => Promise<Bookmark[]>;
@@ -58,6 +59,18 @@ export interface LimboAPI {
   isDebridConfigured: () => Promise<boolean>;
   convertMagnetDebrid: (magnetUri: string) => Promise<string[]>;
   getSupportedHosts: () => Promise<{ hosts: string[]; error?: string }>;
+  realDebridDeviceStart: () => Promise<
+    | { success: true; userCode: string; verificationUrl: string; interval: number; expiresIn: number }
+    | { success: false; error: string }
+  >;
+  realDebridDevicePoll: () => Promise<
+    | { status: "idle" }
+    | { status: "pending" }
+    | { status: "expired"; error: string }
+    | { status: "success"; accessToken: string }
+    | { status: "error"; error: string }
+  >;
+  realDebridDeviceCancel: () => Promise<{ success: boolean }>;
 
   // Events
   onDownloadStarted: (callback: (download: Download) => void) => () => void;
@@ -71,6 +84,15 @@ export interface LimboAPI {
   onClipboardDownloadDetected: (callback: (urls: string[]) => void) => () => void;
   onMagnetLinkOpened: (callback: (magnetUri: string) => void) => () => void;
   onTorrentFileOpened: (callback: (filePath: string) => void) => () => void;
+  onExtractionProgress: (
+    callback: (data: {
+      downloadId: string;
+      status: string;
+      percent?: number;
+      message?: string;
+      error?: string;
+    }) => void
+  ) => () => void;
 }
 
 interface TorrentFile {
@@ -154,6 +176,7 @@ const api: LimboAPI = {
   minimize: () => ipcRenderer.send("window-minimize"),
   maximize: () => ipcRenderer.send("window-maximize"),
   close: () => ipcRenderer.send("window-close"),
+  openExternal: (url) => ipcRenderer.invoke("open-external", url),
 
   // Bookmarks
   getBookmarks: () => ipcRenderer.invoke("get-bookmarks"),
@@ -207,6 +230,9 @@ const api: LimboAPI = {
   isDebridConfigured: () => ipcRenderer.invoke("is-debrid-configured"),
   convertMagnetDebrid: (magnetUri) => ipcRenderer.invoke("convert-magnet-debrid", magnetUri),
   getSupportedHosts: () => ipcRenderer.invoke("get-supported-hosts"),
+  realDebridDeviceStart: () => ipcRenderer.invoke("realdebrid-device-start"),
+  realDebridDevicePoll: () => ipcRenderer.invoke("realdebrid-device-poll"),
+  realDebridDeviceCancel: () => ipcRenderer.invoke("realdebrid-device-cancel"),
 
   // Events
   onDownloadStarted: (callback) => {
@@ -264,6 +290,20 @@ const api: LimboAPI = {
     const handler = (_: IpcRendererEvent, filePath: string) => callback(filePath);
     ipcRenderer.on("torrent-file-opened", handler);
     return () => ipcRenderer.removeListener("torrent-file-opened", handler);
+  },
+  onExtractionProgress: (callback) => {
+    const handler = (
+      _: IpcRendererEvent,
+      data: {
+        downloadId: string;
+        status: string;
+        percent?: number;
+        message?: string;
+        error?: string;
+      }
+    ) => callback(data);
+    ipcRenderer.on("extraction-progress", handler);
+    return () => ipcRenderer.removeListener("extraction-progress", handler);
   },
 };
 

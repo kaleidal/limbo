@@ -52,7 +52,19 @@ function handleWillDownload(
   store.set("downloads", downloads);
 
   console.log(`[Download] Started: ${download.filename} (${downloadId}) -> ${downloadPath}`);
-  getMainWindow()?.webContents.send("download-started", download);
+  getMainWindow()?.webContents.send("download-started", {
+    id: download.id,
+    filename: download.filename,
+    url: download.url,
+    path: download.path,
+    size: download.size,
+    downloaded: download.received,
+    status: download.status,
+    speed: download.speed,
+    eta: download.eta,
+    extractProgress: download.extractProgress,
+    extractStatus: download.extractStatus,
+  });
 
   // Progress updates
   item.on("updated", (_, state) => {
@@ -76,10 +88,12 @@ function handleWillDownload(
 
     getMainWindow()?.webContents.send("download-progress", {
       id: downloadId,
-      received: receivedBytes,
-      size: totalBytes,
+      downloaded: receivedBytes,
+      total: totalBytes || downloads[idx].size || 0,
       status: downloads[idx].status,
       speed,
+      extractProgress: downloads[idx].extractProgress,
+      extractStatus: downloads[idx].extractStatus,
     });
   });
 
@@ -112,10 +126,10 @@ function handleWillDownload(
 
     store.set("downloads", downloads);
 
-    getMainWindow()?.webContents.send("download-completed", {
-      id: downloadId,
-      status: downloads[idx].status,
-    });
+    const payload = { id: downloadId, status: downloads[idx].status };
+    // Keep both event names for compatibility
+    getMainWindow()?.webContents.send("download-complete", payload);
+    getMainWindow()?.webContents.send("download-completed", payload);
   });
 }
 

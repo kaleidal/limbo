@@ -88,6 +88,46 @@ export function App() {
         }
       });
 
+      const unsubExtraction = window.limbo.onExtractionProgress((data) => {
+        const id = data.downloadId;
+        if (!id) return;
+
+        if (data.status === "extracting") {
+          updateDownload(id, {
+            status: "extracting" as any,
+            extractProgress: 0,
+            extractStatus: "Extracting...",
+          });
+          return;
+        }
+
+        if (data.status === "progress") {
+          updateDownload(id, {
+            status: "extracting" as any,
+            extractProgress: typeof data.percent === "number" ? data.percent : 0,
+            extractStatus: data.message || "Extracting...",
+          });
+          return;
+        }
+
+        if (data.status === "done") {
+          updateDownload(id, {
+            status: "completed" as any,
+            extractProgress: 100,
+            extractStatus: "Extracted",
+          });
+          return;
+        }
+
+        if (data.status === "error") {
+          updateDownload(id, {
+            status: "completed" as any,
+            extractProgress: 100,
+            extractStatus: data.error ? `Extraction failed: ${data.error}` : "Extraction failed",
+          });
+        }
+      });
+
       return () => {
         unsubStarted();
         unsubProgress();
@@ -98,6 +138,7 @@ export function App() {
         unsubTorrentComplete();
         unsubTorrentError();
         unsubTorrentFile();
+        unsubExtraction();
       };
     }
   }, []);

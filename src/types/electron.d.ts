@@ -102,6 +102,7 @@ export interface LimboAPI {
   minimize: () => void;
   maximize: () => void;
   close: () => void;
+  openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
 
   // Bookmarks
   getBookmarks: () => Promise<Bookmark[]>;
@@ -148,6 +149,18 @@ export interface LimboAPI {
   isDebridConfigured: () => Promise<boolean>;
   convertMagnetDebrid: (magnetUri: string) => Promise<string[]>;
   getSupportedHosts: () => Promise<{ hosts: string[]; error?: string }>;
+  realDebridDeviceStart: () => Promise<
+    | { success: true; userCode: string; verificationUrl: string; interval: number; expiresIn: number }
+    | { success: false; error: string }
+  >;
+  realDebridDevicePoll: () => Promise<
+    | { status: "idle" }
+    | { status: "pending" }
+    | { status: "expired"; error: string }
+    | { status: "success"; accessToken: string }
+    | { status: "error"; error: string }
+  >;
+  realDebridDeviceCancel: () => Promise<{ success: boolean }>;
 
   // Settings
   getSettings: () => Promise<Settings>;
@@ -167,6 +180,15 @@ export interface LimboAPI {
   onClipboardDownloadDetected: (callback: (urls: string[]) => void) => () => void;
   onMagnetLinkOpened: (callback: (magnetUri: string) => void) => () => void;
   onTorrentFileOpened: (callback: (filePath: string) => void) => () => void;
+  onExtractionProgress: (
+    callback: (data: {
+      downloadId: string;
+      status: string;
+      percent?: number;
+      message?: string;
+      error?: string;
+    }) => void
+  ) => () => void;
 }
 
 declare global {

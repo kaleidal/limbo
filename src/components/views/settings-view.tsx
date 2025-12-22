@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,9 +31,49 @@ export function SettingsView() {
   const [hostsLoading, setHostsLoading] = useState(false);
   const [hostsError, setHostsError] = useState<string | null>(null);
 
+  const [rdDevice, setRdDevice] = useState<
+    | null
+    | {
+        userCode: string;
+        verificationUrl: string;
+        interval: number;
+        expiresIn: number;
+      }
+  >(null);
+  const [rdLinking, setRdLinking] = useState(false);
+  const [rdLinkError, setRdLinkError] = useState<string | null>(null);
+  const rdPollTimerRef = useRef<number | null>(null);
+  const [showDebridApiKey, setShowDebridApiKey] = useState(false);
+
   useEffect(() => {
     setLocalSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    return () => {
+      if (rdPollTimerRef.current !== null) {
+        window.clearInterval(rdPollTimerRef.current);
+        rdPollTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (localSettings?.debrid?.service !== "realdebrid") {
+      if (rdPollTimerRef.current !== null) {
+        window.clearInterval(rdPollTimerRef.current);
+        rdPollTimerRef.current = null;
+      }
+      setRdDevice(null);
+      setRdLinking(false);
+      setRdLinkError(null);
+      setShowDebridApiKey(false);
+    }
+  }, [localSettings?.debrid?.service]);
+
+  const isRealDebridLinked =
+    localSettings?.debrid?.service === "realdebrid" &&
+    !!localSettings?.debrid?.apiKey;
 
   // Fetch supported hosts when debrid config changes
   useEffect(() => {
@@ -103,6 +143,106 @@ export function SettingsView() {
       console.error("Failed to clear data:", err);
     } finally {
       setClearing(false);
+    }
+  };
+
+  const handleRealDebridStartDeviceLink = async () => {
+    if (!window.limbo) return;
+    setRdLinkError(null);
+    setRdLinking(true);
+
+    try {
+      const res = await window.limbo.realDebridDeviceStart();
+      if (!res.success) {
+        setRdLinkError(res.error);
+        setRdLinking(false);
+        return;
+      }
+
+      setRdDevice({
+        userCode: res.userCode,
+        verificationUrl: res.verificationUrl,
+        interval: res.interval,
+        expiresIn: res.expiresIn,
+      });
+
+      if (rdPollTimerRef.current !== null) {
+        window.clearInterval(rdPollTimerRef.current);
+      }
+
+      rdPollTimerRef.current = window.setInterval(async () => {
+        if (!window.limbo) return;
+        try {
+          const poll = await window.limbo.realDebridDevicePoll();
+          if (poll.status === "pending" || poll.status === "idle") return;
+
+          if (poll.status === "success") {
+            if (rdPollTimerRef.current !== null) {
+              window.clearInterval(rdPollTimerRef.current);
+              rdPollTimerRef.current = null;
+            }
+            setRdLinking(false);
+            setRdLinkError(null);
+            setRdDevice(null);
+            const updated = await window.limbo.getSettings();
+            setSettings(updated);
+            setLocalSettings(updated);
+            return;
+          }
+
+          if (poll.status === "expired" || poll.status === "error") {
+            if (rdPollTimerRef.current !== null) {
+              window.clearInterval(rdPollTimerRef.current);
+              rdPollTimerRef.current = null;
+            }
+            setRdLinking(false);
+            setRdLinkError(poll.error);
+            return;
+          }
+        } catch (err) {
+          if (rdPollTimerRef.current !== null) {
+            window.clearInterval(rdPollTimerRef.current);
+            rdPollTimerRef.current = null;
+          }
+          setRdLinking(false);
+          setRdLinkError("Real-Debrid: polling failed");
+        }
+      }, Math.max(1, res.interval) * 1000);
+    } catch (err) {
+      setRdLinkError("Real-Debrid: failed to start device linking");
+      setRdLinking(false);
+    }
+  };
+
+  const handleRealDebridCancelDeviceLink = async () => {
+    if (!window.limbo) return;
+    if (rdPollTimerRef.current !== null) {
+      window.clearInterval(rdPollTimerRef.current);
+      rdPollTimerRef.current = null;
+    }
+    try {
+      await window.limbo.realDebridDeviceCancel();
+    } finally {
+      setRdDevice(null);
+      setRdLinking(false);
+    }
+  };
+
+  const handleRealDebridUnlink = async () => {
+    if (!window.limbo || !localSettings) return;
+    const confirmed = window.confirm("Unlink Real-Debrid? This will remove the stored token.");
+    if (!confirmed) return;
+
+    setRdLinkError(null);
+    try {
+      const updated = await window.limbo.updateSettings({
+        debrid: { service: "realdebrid", apiKey: "" },
+      });
+      setSettings(updated);
+      setLocalSettings(updated);
+      setShowDebridApiKey(true);
+    } catch (err) {
+      setRdLinkError("Failed to unlink Real-Debrid");
     }
   };
 
@@ -260,7 +400,8 @@ export function SettingsView() {
               </div>
             </div>
 
-            {localSettings.debrid.service && (
+            {localSettings.debrid.service &&
+              (localSettings.debrid.service !== "realdebrid" || !isRealDebridLinked || showDebridApiKey) && (
               <div>
                 <Label htmlFor="apiKey">API Key</Label>
                 <div className="relative mt-1">
@@ -290,6 +431,125 @@ export function SettingsView() {
                   {localSettings.debrid.service === "premiumize" &&
                     "Get your API key from premiumize.me/account"}
                 </p>
+              </div>
+            )}
+
+            {localSettings.debrid.service === "realdebrid" && (
+              <div className="pt-2 border-t border-neutral-700">
+                <Label>Real-Debrid Device Link</Label>
+                <p className="text-sm text-neutral-500 mt-1">
+                  Link your Real-Debrid account without manually copying an API token.
+                </p>
+
+                {rdLinkError && (
+                  <div className="flex items-center gap-2 text-red-400 text-sm mt-2">
+                    <AlertCircle className="w-4 h-4" />
+                    {rdLinkError}
+                  </div>
+                )}
+
+                {rdDevice ? (
+                  <div className="mt-3 space-y-2">
+                    <div>
+                      <Label htmlFor="rdUserCode">User Code</Label>
+                      <Input
+                        id="rdUserCode"
+                        value={rdDevice.userCode}
+                        readOnly
+                        className="mt-1 bg-neutral-800 border-neutral-700"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          const res = await window.limbo?.openExternal(rdDevice.verificationUrl);
+                          if (res && !res.success) {
+                            setRdLinkError(res.error || "Failed to open browser");
+                          }
+                        }}
+                      >
+                        Open real-debrid.com/device
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleRealDebridCancelDeviceLink}
+                      >
+                        Cancel
+                      </Button>
+                      {rdLinking && (
+                        <div className="flex items-center gap-2 text-neutral-500 text-sm">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Waiting for approval...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3">
+                    {isRealDebridLinked ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-green-400 text-sm">
+                          <CheckCircle className="w-4 h-4" />
+                          Linked
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setShowDebridApiKey(false);
+                              handleRealDebridStartDeviceLink();
+                            }}
+                            disabled={rdLinking}
+                          >
+                            Re-link
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleRealDebridUnlink}
+                            disabled={rdLinking}
+                          >
+                            Unlink
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleRealDebridStartDeviceLink}
+                        disabled={rdLinking}
+                      >
+                        {rdLinking ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            Starting...
+                          </>
+                        ) : (
+                          "Link Device"
+                        )}
+                      </Button>
+                    )}
+
+                    {isRealDebridLinked && (
+                      <div className="mt-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2"
+                          onClick={() => setShowDebridApiKey((v) => !v)}
+                        >
+                          {showDebridApiKey ? "Hide API Key" : "Show API Key"}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
