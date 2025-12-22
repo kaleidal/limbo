@@ -240,7 +240,7 @@ export function ClipboardMonitor() {
               onClick={() => handleDownloadAll(true)}
               disabled={isProcessing}
               size="sm"
-              className="w-full gap-2 bg-gradient-to-r from-lime-600 to-green-600 hover:from-lime-500 hover:to-green-500"
+              className="w-full gap-2 bg-linear-to-r from-lime-600 to-green-600 hover:from-lime-500 hover:to-green-500"
             >
               <Zap className="w-4 h-4" />
               {isProcessing ? `Processing...` : `Download via Debrid${detectedUrls.length > 1 ? ` (${detectedUrls.length})` : ""}`}

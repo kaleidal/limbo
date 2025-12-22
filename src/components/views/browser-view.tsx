@@ -192,7 +192,7 @@ export function BrowserView() {
       {/* Error display */}
       {error && (
         <div className="flex items-center gap-2 p-3 bg-red-950/50 border-b border-red-900 text-red-400">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <AlertCircle className="w-4 h-4 shrink-0" />
           <span className="text-sm">{error}</span>
           <button
             onClick={handleReload}

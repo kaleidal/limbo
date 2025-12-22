@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
 import { useAppStore } from "@/store/app-store";
 import {
   Download,
@@ -49,19 +49,19 @@ export function DownloadsView() {
     };
   }, []);
 
-  const formatSize = (bytes: number) => {
+  const formatSize = useCallback((bytes: number) => {
     if (bytes === 0) return "0 B";
     const k = 1024;
     const sizes = ["B", "KB", "MB", "GB", "TB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
+  }, []);
 
-  const formatSpeed = (bytesPerSecond: number) => {
+  const formatSpeed = useCallback((bytesPerSecond: number) => {
     return formatSize(bytesPerSecond) + "/s";
-  };
+  }, [formatSize]);
 
-  const formatEta = (seconds: number) => {
+  const formatEta = useCallback((seconds: number) => {
     if (!seconds || seconds <= 0 || !isFinite(seconds)) return "--";
     if (seconds < 60) return `${Math.round(seconds)}s`;
     if (seconds < 3600) {
@@ -72,14 +72,14 @@ export function DownloadsView() {
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     return `${hours}h ${mins}m`;
-  };
+  }, []);
 
-  const getProgress = (downloaded: number, total: number) => {
+  const getProgress = useCallback((downloaded: number, total: number) => {
     if (total === 0) return 0;
     return Math.round((downloaded / total) * 100);
-  };
+  }, []);
 
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = useCallback((status: string) => {
     switch (status) {
       case "downloading":
         return <Download className="w-4 h-4 text-lime-500 animate-pulse" />;
@@ -98,9 +98,9 @@ export function DownloadsView() {
       default:
         return <Download className="w-4 h-4" />;
     }
-  };
+  }, []);
 
-  const handleStartDownload = async () => {
+  const handleStartDownload = useCallback(async () => {
     if (!urlInput.trim() || !window.limbo || isAdding) return;
     
     setIsAdding(true);
@@ -127,68 +127,68 @@ export function DownloadsView() {
     } finally {
       setIsAdding(false);
     }
-  };
+  }, [urlInput, isAdding]);
 
-  const handlePause = async (id: string) => {
+  const handlePause = useCallback(async (id: string) => {
     if (window.limbo) {
       // Optimistic UI update
       updateDownload(id, { status: "paused" });
       await window.limbo.pauseDownload(id);
     }
-  };
+  }, [updateDownload]);
 
-  const handleResume = async (id: string) => {
+  const handleResume = useCallback(async (id: string) => {
     if (window.limbo) {
       // Optimistic UI update
       updateDownload(id, { status: "downloading" });
       await window.limbo.resumeDownload(id);
     }
-  };
+  }, [updateDownload]);
 
-  const handleCancel = async (id: string) => {
+  const handleCancel = useCallback(async (id: string) => {
     if (window.limbo) {
       const updated = await window.limbo.cancelDownload(id);
       useAppStore.getState().setDownloads(updated);
     }
-  };
+  }, []);
 
-  const handleClearCompleted = async () => {
+  const handleClearCompleted = useCallback(async () => {
     if (window.limbo) {
       const updated = await window.limbo.clearCompletedDownloads();
       useAppStore.getState().setDownloads(updated);
     }
-  };
+  }, []);
 
-  const handleOpenLocation = async (path: string) => {
+  const handleOpenLocation = useCallback(async (path: string) => {
     if (window.limbo) {
       await window.limbo.openFileLocation(path);
     }
-  };
+  }, []);
 
   // Torrent handlers
-  const handlePauseTorrent = async (id: string) => {
+  const handlePauseTorrent = useCallback(async (id: string) => {
     if (window.limbo) {
       await window.limbo.pauseTorrent(id);
       updateTorrent(id, { status: "paused" });
     }
-  };
+  }, [updateTorrent]);
 
-  const handleResumeTorrent = async (id: string) => {
+  const handleResumeTorrent = useCallback(async (id: string) => {
     if (window.limbo) {
       await window.limbo.resumeTorrent(id);
       updateTorrent(id, { status: "downloading" });
     }
-  };
+  }, [updateTorrent]);
 
-  const handleRemoveTorrent = async (id: string, deleteFiles: boolean = false) => {
+  const handleRemoveTorrent = useCallback(async (id: string, deleteFiles: boolean = false) => {
     if (window.limbo) {
       const updated = await window.limbo.removeTorrent(id, deleteFiles);
       setTorrents(updated);
     }
-  };
+  }, [setTorrents]);
 
   // Pause/Resume all handlers
-  const handlePauseAll = async () => {
+  const handlePauseAll = useCallback(async () => {
     if (!window.limbo) return;
     if (activeTab === "downloads") {
       // Optimistic UI update for downloads
@@ -207,9 +207,9 @@ export function DownloadsView() {
       });
       await window.limbo.pauseAllTorrents();
     }
-  };
+  }, [activeTab, downloads, torrents, updateDownload, updateTorrent]);
 
-  const handleResumeAll = async () => {
+  const handleResumeAll = useCallback(async () => {
     if (!window.limbo) return;
     if (activeTab === "downloads") {
       // Optimistic UI update for downloads
@@ -228,7 +228,7 @@ export function DownloadsView() {
       });
       await window.limbo.resumeAllTorrents();
     }
-  };
+  }, [activeTab, downloads, torrents, updateDownload, updateTorrent]);
 
   const activeDownloads = downloads.filter(
     (d) => d.status === "downloading" || d.status === "pending" || d.status === "extracting" || d.status === "paused"
@@ -322,7 +322,7 @@ export function DownloadsView() {
       {/* VPN Warning Banner */}
       {vpnWarning && (
         <div className="flex items-center gap-3 p-4 mb-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-          <Shield className="w-5 h-5 text-amber-500 flex-shrink-0" />
+          <Shield className="w-5 h-5 text-amber-500 shrink-0" />
           <div className="flex-1">
             <p className="font-medium text-amber-500">VPN Required</p>
             <p className="text-sm text-neutral-400">
@@ -479,7 +479,7 @@ export function DownloadsView() {
   );
 }
 
-function DownloadItem({
+const DownloadItem = memo(function DownloadItem({
   download,
   onPause,
   onResume,
@@ -601,9 +601,9 @@ function DownloadItem({
       </div>
     </div>
   );
-}
+});
 
-function TorrentItem({
+const TorrentItem = memo(function TorrentItem({
   torrent,
   onPause,
   onResume,
@@ -721,4 +721,4 @@ function TorrentItem({
       </div>
     </div>
   );
-}
+});

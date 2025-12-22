@@ -147,11 +147,13 @@ export interface LimboAPI {
   // Debrid
   isDebridConfigured: () => Promise<boolean>;
   convertMagnetDebrid: (magnetUri: string) => Promise<string[]>;
+  getSupportedHosts: () => Promise<{ hosts: string[]; error?: string }>;
 
   // Settings
   getSettings: () => Promise<Settings>;
   updateSettings: (settings: Partial<Settings>) => Promise<Settings>;
   selectDownloadPath: () => Promise<string | null>;
+  clearData: () => Promise<{ downloads: Download[]; torrents: TorrentInfo[]; library: LibraryItem[]; settings: Settings }>;
 
   // Events
   onDownloadStarted: (callback: (download: Download) => void) => () => void;

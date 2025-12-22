@@ -16,16 +16,53 @@ import {
   Monitor,
   Share2,
   Power,
+  Trash2,
+  Loader2,
+  CheckCircle,
+  AlertCircle,
 } from "lucide-react";
 
 export function SettingsView() {
-  const { settings, setSettings } = useAppStore();
+  const { settings, setSettings, setDownloads, setTorrents, setLibrary } = useAppStore();
   const [localSettings, setLocalSettings] = useState(settings);
   const [saved, setSaved] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [supportedHosts, setSupportedHosts] = useState<string[]>([]);
+  const [hostsLoading, setHostsLoading] = useState(false);
+  const [hostsError, setHostsError] = useState<string | null>(null);
 
   useEffect(() => {
     setLocalSettings(settings);
   }, [settings]);
+
+  // Fetch supported hosts when debrid config changes
+  useEffect(() => {
+    if (settings?.debrid?.service && settings?.debrid?.apiKey) {
+      fetchSupportedHosts();
+    } else {
+      setSupportedHosts([]);
+      setHostsError(null);
+    }
+  }, [settings?.debrid?.service, settings?.debrid?.apiKey]);
+
+  const fetchSupportedHosts = async () => {
+    if (!window.limbo) return;
+    setHostsLoading(true);
+    setHostsError(null);
+    try {
+      const result = await window.limbo.getSupportedHosts();
+      if (result.error) {
+        setHostsError(result.error);
+        setSupportedHosts([]);
+      } else {
+        setSupportedHosts(result.hosts);
+      }
+    } catch (err) {
+      setHostsError("Failed to fetch supported hosts");
+    } finally {
+      setHostsLoading(false);
+    }
+  };
 
   const handleSelectPath = async () => {
     if (window.limbo) {
@@ -42,6 +79,30 @@ export function SettingsView() {
       setSettings(updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+    }
+  };
+
+  const handleClearData = async () => {
+    if (!window.limbo) return;
+    
+    const confirmed = window.confirm(
+      "This will clear all downloads, torrents, library items, and reset settings (except bookmarks and download path). Are you sure?"
+    );
+    if (!confirmed) return;
+
+    setClearing(true);
+    try {
+      const result = await window.limbo.clearData();
+      setDownloads(result.downloads);
+      setTorrents(result.torrents);
+      setLibrary(result.library);
+      setSettings(result.settings);
+      setLocalSettings(result.settings);
+      setSupportedHosts([]);
+    } catch (err) {
+      console.error("Failed to clear data:", err);
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -231,6 +292,67 @@ export function SettingsView() {
                 </p>
               </div>
             )}
+
+            {/* Supported Hosts Display */}
+            {settings?.debrid?.service && settings?.debrid?.apiKey && (
+              <div className="pt-2 border-t border-neutral-700">
+                <div className="flex items-center justify-between mb-2">
+                  <Label>Supported File Hosts</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={fetchSupportedHosts}
+                    disabled={hostsLoading}
+                    className="h-7 px-2"
+                  >
+                    {hostsLoading ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-3 h-3" />
+                    )}
+                  </Button>
+                </div>
+                {hostsError ? (
+                  <div className="flex items-center gap-2 text-red-400 text-sm">
+                    <AlertCircle className="w-4 h-4" />
+                    {hostsError}
+                  </div>
+                ) : hostsLoading ? (
+                  <div className="flex items-center gap-2 text-neutral-500 text-sm">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading supported hosts...
+                  </div>
+                ) : supportedHosts.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-green-400 text-sm">
+                      <CheckCircle className="w-4 h-4" />
+                      {supportedHosts.length} hosts supported
+                    </div>
+                    <div className="max-h-32 overflow-y-auto bg-neutral-800 rounded p-2">
+                      <div className="flex flex-wrap gap-1">
+                        {supportedHosts.slice(0, 50).map((host) => (
+                          <span
+                            key={host}
+                            className="px-2 py-0.5 text-xs bg-neutral-700 rounded text-neutral-300"
+                          >
+                            {host}
+                          </span>
+                        ))}
+                        {supportedHosts.length > 50 && (
+                          <span className="px-2 py-0.5 text-xs text-neutral-500">
+                            +{supportedHosts.length - 50} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-neutral-500 text-sm">
+                    Save settings first, then refresh to see supported hosts
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </section>
 
@@ -355,6 +477,41 @@ export function SettingsView() {
                 }
               />
             </div>
+          </div>
+        </section>
+
+        {/* Data Management */}
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Trash2 className="w-5 h-5" />
+            Data Management
+          </h2>
+          <div className="space-y-4 bg-neutral-900 rounded-lg p-4 border border-neutral-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Clear All Data</p>
+                <p className="text-sm text-neutral-500">
+                  Remove all downloads, torrents, and library items. Bookmarks are preserved.
+                </p>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleClearData}
+                disabled={clearing}
+                className="gap-2"
+              >
+                {clearing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                {clearing ? "Clearing..." : "Clear Data"}
+              </Button>
+            </div>
+            <p className="text-xs text-amber-500">
+              ⚠️ This action cannot be undone. Your downloaded files will remain on disk.
+            </p>
           </div>
         </section>
 

@@ -48,14 +48,16 @@ export interface LimboAPI {
   resumeAllTorrents: () => Promise<void>;
   checkVpnStatus: () => Promise<boolean>;
 
-  // Debrid
-  isDebridConfigured: () => Promise<boolean>;
-  convertMagnetDebrid: (magnetUri: string) => Promise<string[]>;
-
   // Settings
   getSettings: () => Promise<Settings>;
   updateSettings: (settings: Partial<Settings>) => Promise<Settings>;
   selectDownloadPath: () => Promise<string | null>;
+  clearData: () => Promise<{ downloads: Download[]; torrents: TorrentInfo[]; library: LibraryItem[]; settings: Settings }>;
+
+  // Debrid
+  isDebridConfigured: () => Promise<boolean>;
+  convertMagnetDebrid: (magnetUri: string) => Promise<string[]>;
+  getSupportedHosts: () => Promise<{ hosts: string[]; error?: string }>;
 
   // Events
   onDownloadStarted: (callback: (download: Download) => void) => () => void;
@@ -195,14 +197,16 @@ const api: LimboAPI = {
   resumeAllTorrents: () => ipcRenderer.invoke("resume-all-torrents"),
   checkVpnStatus: () => ipcRenderer.invoke("check-vpn-status"),
 
-  // Debrid
-  isDebridConfigured: () => ipcRenderer.invoke("is-debrid-configured"),
-  convertMagnetDebrid: (magnetUri) => ipcRenderer.invoke("convert-magnet-debrid", magnetUri),
-
   // Settings
   getSettings: () => ipcRenderer.invoke("get-settings"),
   updateSettings: (settings) => ipcRenderer.invoke("update-settings", settings),
   selectDownloadPath: () => ipcRenderer.invoke("select-download-path"),
+  clearData: () => ipcRenderer.invoke("clear-data"),
+
+  // Debrid
+  isDebridConfigured: () => ipcRenderer.invoke("is-debrid-configured"),
+  convertMagnetDebrid: (magnetUri) => ipcRenderer.invoke("convert-magnet-debrid", magnetUri),
+  getSupportedHosts: () => ipcRenderer.invoke("get-supported-hosts"),
 
   // Events
   onDownloadStarted: (callback) => {

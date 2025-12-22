@@ -189,3 +189,95 @@ export async function convertMagnetWithDebrid(
   }
   return null;
 }
+
+// Get list of supported hosts from the debrid service
+export async function getSupportedHosts(
+  debrid: DebridConfig
+): Promise<{ hosts: string[]; error?: string }> {
+  try {
+    if (!debrid.service || !debrid.apiKey) {
+      return { hosts: [], error: "No debrid service configured" };
+    }
+
+    console.log(`[Debrid] Fetching supported hosts from ${debrid.service}...`);
+
+    if (debrid.service === "realdebrid") {
+      // Real-Debrid: GET /hosts
+      const response = await fetch("https://api.real-debrid.com/rest/1.0/hosts", {
+        headers: { Authorization: `Bearer ${debrid.apiKey}` },
+      });
+      
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        return { hosts: [], error: `Real-Debrid: ${err.error || response.statusText}` };
+      }
+      
+      const data = await response.json();
+      // Real-Debrid returns an object with host domains as keys
+      const hosts = Object.keys(data).filter(h => h && h.includes('.'));
+      console.log(`[Debrid] Real-Debrid supports ${hosts.length} hosts`);
+      return { hosts };
+    } else if (debrid.service === "alldebrid") {
+      // AllDebrid: GET /hosts
+      const response = await fetch(
+        `https://api.alldebrid.com/v4/hosts?agent=limbo&apikey=${debrid.apiKey}`
+      );
+      
+      if (!response.ok) {
+        return { hosts: [], error: `AllDebrid: ${response.statusText}` };
+      }
+      
+      const data = await response.json();
+      if (data.status === "error" || data.error) {
+        return { hosts: [], error: `AllDebrid: ${data.error?.message || data.error}` };
+      }
+      
+      // AllDebrid returns hosts in data.hosts array or object
+      let hosts: string[] = [];
+      if (data.data?.hosts) {
+        if (Array.isArray(data.data.hosts)) {
+          hosts = data.data.hosts.map((h: any) => h.domain || h.name || h).filter(Boolean);
+        } else {
+          // Object form: keys are host IDs, values have domain property
+          hosts = Object.values(data.data.hosts)
+            .map((h: any) => h.domain || h.domains?.[0])
+            .filter(Boolean);
+        }
+      }
+      console.log(`[Debrid] AllDebrid supports ${hosts.length} hosts`);
+      return { hosts };
+    } else if (debrid.service === "premiumize") {
+      // Premiumize: GET /services/list
+      const response = await fetch(
+        `https://www.premiumize.me/api/services/list?apikey=${debrid.apiKey}`
+      );
+      
+      if (!response.ok) {
+        return { hosts: [], error: `Premiumize: ${response.statusText}` };
+      }
+      
+      const data = await response.json();
+      if (data.status !== "success") {
+        return { hosts: [], error: `Premiumize: ${data.message || "Unknown error"}` };
+      }
+      
+      // Premiumize returns services with patterns/hosts
+      let hosts: string[] = [];
+      if (data.directdl) {
+        hosts = data.directdl.filter((h: string) => h && h.includes('.'));
+      }
+      if (data.cache) {
+        hosts = [...hosts, ...data.cache.filter((h: string) => h && h.includes('.'))];
+      }
+      // Remove duplicates
+      hosts = [...new Set(hosts)];
+      console.log(`[Debrid] Premiumize supports ${hosts.length} hosts`);
+      return { hosts };
+    }
+
+    return { hosts: [], error: `Unknown debrid service: ${debrid.service}` };
+  } catch (err) {
+    console.error("[Debrid] Error fetching supported hosts:", err);
+    return { hosts: [], error: `Failed to fetch hosts: ${err}` };
+  }
+}

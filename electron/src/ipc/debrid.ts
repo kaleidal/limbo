@@ -2,7 +2,7 @@
 
 import { ipcMain, BrowserWindow } from "electron";
 import { store } from "../store.js";
-import { convertMagnetWithDebrid } from "../debrid.js";
+import { convertMagnetWithDebrid, getSupportedHosts } from "../debrid.js";
 
 export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null) {
   ipcMain.handle("is-debrid-configured", () => {
@@ -23,5 +23,14 @@ export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null
       getMainWindow()?.webContents.downloadURL(link);
     }
     return links;
+  });
+
+  // Get supported hosts from the configured debrid service
+  ipcMain.handle("get-supported-hosts", async () => {
+    const settings = store.get("settings");
+    if (!settings.debrid.service || !settings.debrid.apiKey) {
+      return { hosts: [], error: "No debrid service configured" };
+    }
+    return getSupportedHosts(settings.debrid);
   });
 }

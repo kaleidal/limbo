@@ -98,7 +98,13 @@ export const useAppStore = create<AppState>((set, _) => ({
       ),
     })),
   addDownload: (download) =>
-    set((state) => ({ downloads: [...state.downloads, download] })),
+    set((state) => {
+      // Prevent duplicates
+      if (state.downloads.some((d) => d.id === download.id)) {
+        return state;
+      }
+      return { downloads: [...state.downloads, download] };
+    }),
   removeDownload: (id) =>
     set((state) => ({ downloads: state.downloads.filter((d) => d.id !== id) })),
 
@@ -106,7 +112,13 @@ export const useAppStore = create<AppState>((set, _) => ({
   torrents: [],
   setTorrents: (torrents) => set({ torrents }),
   addTorrent: (torrent) =>
-    set((state) => ({ torrents: [...state.torrents, torrent] })),
+    set((state) => {
+      // Prevent duplicates
+      if (state.torrents.some((t) => t.id === torrent.id)) {
+        return state;
+      }
+      return { torrents: [...state.torrents, torrent] };
+    }),
   updateTorrent: (id, updates) =>
     set((state) => ({
       torrents: state.torrents.map((t) =>
