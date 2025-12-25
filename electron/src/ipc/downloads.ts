@@ -2,8 +2,13 @@
 
 import { ipcMain, session, BrowserWindow } from "electron";
 import { store } from "../store.js";
+import type { Download } from "../types.js";
 import { unrestrictLink } from "../debrid.js";
 import { isFileHostUrl, extractFileHostLink } from "../file-hosts.js";
+
+import { v4 as uuidv4 } from "uuid";
+import { getGroupId, getGroupName } from "../grouping.js";
+import { triggerQueueCheck, addPendingDownload } from "../downloads/handler.js";
 
 export function registerDownloadHandlers(
   getMainWindow: () => BrowserWindow | null,
@@ -23,6 +28,8 @@ export function registerDownloadHandlers(
       eta: d.eta,
       extractProgress: d.extractProgress,
       extractStatus: d.extractStatus,
+      groupId: d.groupId,
+      groupName: d.groupName,
     }));
   });
 
@@ -88,6 +95,21 @@ export function registerDownloadHandlers(
     return downloads;
   });
 
+  ipcMain.handle("cancel-all-downloads", () => {
+    const activeDownloads = getActiveDownloads();
+    for (const [id, item] of activeDownloads) {
+      item.cancel();
+    }
+    activeDownloads.clear();
+
+    // Remove all non-terminal downloads (downloading, paused, pending, extracting)
+    const downloads = store.get("downloads").filter(
+      (d) => d.status === "completed" || d.status === "error"
+    );
+    store.set("downloads", downloads);
+    return downloads;
+  });
+
   ipcMain.handle("clear-completed-downloads", () => {
     const downloads = store.get("downloads").filter(
       (d) => d.status !== "completed" && d.status !== "error"
@@ -108,19 +130,16 @@ export function registerDownloadHandlers(
         options?.useDebrid !== false && settings.debrid.service && settings.debrid.apiKey;
 
       if (shouldUseDebrid) {
-        console.log(`[Download] Debrid configured (${settings.debrid.service}), attempting to unrestrict...`);
+        // Resolve Debrid Link
         const result = await unrestrictLink(url, settings.debrid);
         if (result.url) {
-          console.log(`[Download] Using debrid unrestricted URL`);
           finalUrl = result.url;
         } else {
           debridError = result.error;
-          console.warn(`[Download] Debrid failed: ${debridError}`);
         }
       }
 
       if (finalUrl === url && isFileHostUrl(url)) {
-        console.log("[Download] Attempting to extract direct link from file host...");
         const extractedUrl = await extractFileHostLink(url);
         if (extractedUrl) {
           finalUrl = extractedUrl;
@@ -129,7 +148,27 @@ export function registerDownloadHandlers(
         }
       }
 
-      getMainWindow()?.webContents.downloadURL(finalUrl);
+      const downloadId = uuidv4();
+
+      let filename = options?.filename || decodeURIComponent(finalUrl.split('/').pop() || "unknown");
+
+      const download: Download = {
+        id: downloadId,
+        filename: filename,
+        path: "", // Will be set when started
+        url: finalUrl,
+        size: 0,
+        received: 0,
+        status: "pending", // Start as pending
+        startTime: Date.now(),
+        groupId: getGroupId(filename),
+        groupName: getGroupName(filename),
+      };
+
+      addPendingDownload(download, getMainWindow);
+
+      getMainWindow()?.webContents.send("download-started", download);
+
       return { success: true, debridError, warning };
     }
   );

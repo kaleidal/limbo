@@ -33,6 +33,8 @@ export interface Download {
   extractProgress?: number;
   extractStatus?: string;
   resumeData?: string;
+  groupId?: string;
+  groupName?: string;
 }
 
 export interface DownloadPart {
@@ -62,6 +64,10 @@ export interface TorrentInfo {
 export interface DebridConfig {
   service: "realdebrid" | "alldebrid" | "premiumize" | null;
   apiKey: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  clientId?: string;
+  clientSecret?: string;
 }
 
 export interface Settings {
@@ -82,6 +88,7 @@ export interface StoreSchema {
   downloads: Download[];
   torrents: TorrentInfo[];
   settings: Settings;
+  extractedGroups: string[];
 }
 
 export interface MultiPartInfo {

@@ -45,6 +45,8 @@ export interface Download {
   eta?: number;
   extractProgress?: number;
   extractStatus?: string;
+  groupId?: string;
+  groupName?: string;
 }
 
 export interface DownloadProgress {
@@ -127,6 +129,7 @@ export interface LimboAPI {
   pauseDownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<void>;
   cancelDownload: (id: string) => Promise<Download[]>;
+  cancelAllDownloads: () => Promise<Download[]>;
   clearCompletedDownloads: () => Promise<Download[]>;
   pauseAllDownloads: () => Promise<void>;
   resumeAllDownloads: () => Promise<void>;

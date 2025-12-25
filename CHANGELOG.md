@@ -5,7 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2025-12-25
+
+### Added
+- Downloads: **Persistent queue system** – all added links appear immediately as "Pending" and are processed by backend queue logic.
+- Downloads: **Cancel All** button to clear all active/pending downloads.
+- Downloads: **Cancel Group** button on each download group header.
+- Downloads: **Grouped Downloads** - downloads are now grouped by URL and filename, making it easier to manage and cancel multiple downloads at once.
+- Downloads: **Batch Add** button to add multiple links at once.
+
+### Changed
+- Downloads: Queue now enforces `maxConcurrentDownloads` setting by pausing excess downloads and resuming when slots open.
+- Downloads: Improved concurrency counting to include "in-flight" downloads (marked as downloading but not yet started by browser).
+- Downloads: Filenames now display full part numbers (e.g. `.part01.rar`) instead of being stripped.
+- Downloads: Cancelled downloads are immediately removed from memory cache to prevent resurrection.
+- Downloads: Store download progress in memory cache instead of writing every progress byte to disk.
+
+### Fixed
+- Real-Debrid: Fixed refresh token expiration handling.
 
 ## [1.1.3] - 2025-12-22
 

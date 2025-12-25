@@ -31,6 +31,7 @@ export interface LimboAPI {
   pauseDownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<void>;
   cancelDownload: (id: string) => Promise<Download[]>;
+  cancelAllDownloads: () => Promise<Download[]>;
   clearCompletedDownloads: () => Promise<Download[]>;
   pauseAllDownloads: () => Promise<void>;
   resumeAllDownloads: () => Promise<void>;
@@ -202,6 +203,7 @@ const api: LimboAPI = {
   pauseDownload: (id) => ipcRenderer.invoke("pause-download", id),
   resumeDownload: (id) => ipcRenderer.invoke("resume-download", id),
   cancelDownload: (id) => ipcRenderer.invoke("cancel-download", id),
+  cancelAllDownloads: () => ipcRenderer.invoke("cancel-all-downloads"),
   clearCompletedDownloads: () => ipcRenderer.invoke("clear-completed-downloads"),
   pauseAllDownloads: () => ipcRenderer.invoke("pause-all-downloads"),
   resumeAllDownloads: () => ipcRenderer.invoke("resume-all-downloads"),

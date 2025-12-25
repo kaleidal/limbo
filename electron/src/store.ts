@@ -18,6 +18,7 @@ export const store = new Store<StoreSchema>({
     library: [],
     downloads: [],
     torrents: [],
+    extractedGroups: [],
     settings: {
       downloadPath: path.join(app.getPath("downloads"), "Limbo"),
       maxConcurrentDownloads: 3,

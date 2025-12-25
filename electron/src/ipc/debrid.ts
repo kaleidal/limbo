@@ -147,6 +147,10 @@ export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null
         ...settings.debrid,
         service: "realdebrid",
         apiKey: token.access_token,
+        refreshToken: token.refresh_token,
+        expiresAt: Date.now() + (token.expires_in * 1000),
+        clientId: creds.client_id,
+        clientSecret: creds.client_secret,
       },
     });
 

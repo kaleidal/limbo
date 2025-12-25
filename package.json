@@ -1,7 +1,7 @@
 {
   "name": "limbo",
   "private": true,
-  "version": "1.1.3",
+  "version": "1.2.0",
   "description": "A software manager with integrated browser, download manager, and torrent client",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -36,15 +36,21 @@
       "public/**/*"
     ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "public/icon.png"
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "public/icon.png"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "icon": "public/icon.png"
     },
     "fileAssociations": [

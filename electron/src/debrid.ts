@@ -1,9 +1,73 @@
 // Debrid service integration (Real-Debrid, AllDebrid, Premiumize)
 
 import type { DebridConfig, DebridResult } from "./types.js";
+import { store } from "./store.js";
+
+// Check and refresh token if needed
+async function ensureValidToken(debrid: DebridConfig): Promise<DebridConfig> {
+  if (debrid.service !== "realdebrid") return debrid;
+
+  // If no expiry or no refresh token, we can't refresh
+  if (!debrid.expiresAt || !debrid.refreshToken || !debrid.clientId || !debrid.clientSecret) {
+    return debrid;
+  }
+
+  // Buffer of 5 minutes
+  if (Date.now() < debrid.expiresAt - 5 * 60 * 1000) {
+    return debrid;
+  }
+
+  console.log(`[Debrid] Token expiring soon (or expired), refreshing...`);
+
+  try {
+    const form = new URLSearchParams();
+    form.set("client_id", debrid.clientId);
+    form.set("client_secret", debrid.clientSecret);
+    form.set("refresh_token", debrid.refreshToken);
+    form.set("grant_type", "http://oauth.net/grant_type/device/1.0");
+
+    const response = await fetch("https://api.real-debrid.com/oauth/v2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    });
+
+    if (!response.ok) {
+      console.error(`[Debrid] Token refresh failed: ${response.status} ${response.statusText}`);
+      return debrid;
+    }
+
+    const data = await response.json();
+    if (data.access_token && data.refresh_token) {
+      console.log(`[Debrid] Token refreshed successfully`);
+
+      const newConfig: DebridConfig = {
+        ...debrid,
+        apiKey: data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt: Date.now() + (data.expires_in * 1000),
+      };
+
+      // Save to store
+      const settings = store.get("settings");
+      store.set("settings", {
+        ...settings,
+        debrid: newConfig,
+      });
+
+      return newConfig;
+    }
+  } catch (err) {
+    console.error(`[Debrid] Token refresh error:`, err);
+  }
+
+  return debrid;
+}
 
 // Unrestrict a link using debrid service
-export async function unrestrictLink(url: string, debrid: DebridConfig): Promise<DebridResult> {
+export async function unrestrictLink(url: string, debridConfig: DebridConfig): Promise<DebridResult> {
+  const debrid = await ensureValidToken(debridConfig);
+
   try {
     console.log(`[Debrid] Attempting to unrestrict link via ${debrid.service}: ${url}`);
 
@@ -25,6 +89,10 @@ export async function unrestrictLink(url: string, debrid: DebridConfig): Promise
           friendlyError = "Real-Debrid: IP not allowed. Regenerate API key from current IP or disable VPN.";
         } else if (data.error === "hoster_unavailable" || data.error === "link_host_not_supported") {
           friendlyError = "Real-Debrid: This file host is not supported.";
+        } else if (data.error === "bad_token" || data.error === "bad_token_check") {
+          // If we get a bad token error despite check, it might be revoked or we might be out of sync.
+          // For now, just return error, but in future we could force-clear auth.
+          friendlyError = "Real-Debrid: Auth token invalid or expired. Please re-link account.";
         }
         return { url: null, error: friendlyError };
       }
@@ -88,8 +156,10 @@ export async function unrestrictLink(url: string, debrid: DebridConfig): Promise
 // Convert magnet link using debrid service
 export async function convertMagnetWithDebrid(
   magnetUri: string,
-  debrid: DebridConfig
+  debridConfig: DebridConfig
 ): Promise<string[] | null> {
+  const debrid = await ensureValidToken(debridConfig);
+
   try {
     if (debrid.service === "realdebrid") {
       // Add the magnet to Real-Debrid
@@ -192,8 +262,10 @@ export async function convertMagnetWithDebrid(
 
 // Get list of supported hosts from the debrid service
 export async function getSupportedHosts(
-  debrid: DebridConfig
+  debridConfig: DebridConfig
 ): Promise<{ hosts: string[]; error?: string }> {
+  const debrid = await ensureValidToken(debridConfig);
+
   try {
     if (!debrid.service || !debrid.apiKey) {
       return { hosts: [], error: "No debrid service configured" };
@@ -206,12 +278,12 @@ export async function getSupportedHosts(
       const response = await fetch("https://api.real-debrid.com/rest/1.0/hosts", {
         headers: { Authorization: `Bearer ${debrid.apiKey}` },
       });
-      
+
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         return { hosts: [], error: `Real-Debrid: ${err.error || response.statusText}` };
       }
-      
+
       const data = await response.json();
       // Real-Debrid returns an object with host domains as keys
       const hosts = Object.keys(data).filter(h => h && h.includes('.'));
@@ -222,16 +294,16 @@ export async function getSupportedHosts(
       const response = await fetch(
         `https://api.alldebrid.com/v4/hosts?agent=limbo&apikey=${debrid.apiKey}`
       );
-      
+
       if (!response.ok) {
         return { hosts: [], error: `AllDebrid: ${response.statusText}` };
       }
-      
+
       const data = await response.json();
       if (data.status === "error" || data.error) {
         return { hosts: [], error: `AllDebrid: ${data.error?.message || data.error}` };
       }
-      
+
       // AllDebrid returns hosts in data.hosts array or object
       let hosts: string[] = [];
       if (data.data?.hosts) {
@@ -251,16 +323,16 @@ export async function getSupportedHosts(
       const response = await fetch(
         `https://www.premiumize.me/api/services/list?apikey=${debrid.apiKey}`
       );
-      
+
       if (!response.ok) {
         return { hosts: [], error: `Premiumize: ${response.statusText}` };
       }
-      
+
       const data = await response.json();
       if (data.status !== "success") {
         return { hosts: [], error: `Premiumize: ${data.message || "Unknown error"}` };
       }
-      
+
       // Premiumize returns services with patterns/hosts
       let hosts: string[] = [];
       if (data.directdl) {

@@ -8,17 +8,6 @@ import { store } from "../store.js";
 import { isExtractableArchive, parseMultiPartArchive, areAllPartsCompleted } from "../utils.js";
 import type { Download } from "../types.js";
 
-// Track multi-part archive info per baseName
-interface MultiPartTracker {
-  baseName: string;
-  partPaths: Map<number, string>;
-}
-
-const multiPartArchives = new Map<string, MultiPartTracker>();
-
-// Track which archives have been extracted
-const extractedArchives = new Set<string>();
-
 // Cache for running worker
 let extractWorker: Worker | null = null;
 
@@ -45,7 +34,7 @@ export async function shutdownExtractWorker(): Promise<void> {
   if (!worker) return;
   try {
     await worker.terminate();
-  } catch {}
+  } catch { }
 }
 
 export function handleMultiPartExtraction(
@@ -60,30 +49,20 @@ export function handleMultiPartExtraction(
 
   if (!isExtractable || !multiPart.isMultiPart) return false;
 
-  // Track this part
-  const existing = multiPartArchives.get(multiPart.baseName);
-  if (existing) {
-    existing.partPaths.set(multiPart.partNumber, download.path);
-  } else {
-    multiPartArchives.set(multiPart.baseName, {
-      baseName: multiPart.baseName,
-      partPaths: new Map([[multiPart.partNumber, download.path]]),
-    });
-  }
+  const downloads = store.get("downloads") || [];
 
-  const tracker = multiPartArchives.get(multiPart.baseName)!;
-  const downloads = store.get("downloads");
-
-  // Check if all parts are completed
+  // Check completion
   const result = areAllPartsCompleted(multiPart.baseName, downloads);
-  
+
   if (result.allCompleted && result.part1Path) {
-    const extractKey = `multipart:${multiPart.baseName}`;
-    if (extractedArchives.has(extractKey)) {
+    // Check if already extracted using persistent store
+    const extractedGroups = store.get("extractedGroups") || [];
+    const extractKey = `multipart:${multiPart.baseName.toLowerCase()}`;
+
+    if (extractedGroups.includes(extractKey)) {
       console.log(`[Download] Already extracted ${extractKey}, skipping`);
       return false;
     }
-    extractedArchives.add(extractKey);
 
     const firstPartPath = result.part1Path;
     console.log(`[Download] All ${result.totalParts} parts ready for ${multiPart.baseName}, extracting from: ${firstPartPath}`);
@@ -104,16 +83,34 @@ export function handleMultiPartExtraction(
       });
       if (msg.status === "done" || msg.status === "error") {
         worker.off("message", messageHandler);
-        if (msg.status === "done" && settings.deleteArchiveAfterExtract) {
-          for (const p of tracker.partPaths.values()) {
-            try {
-              if (fs.existsSync(p)) fs.unlinkSync(p);
-            } catch (e) {
-              console.warn(`[Extract] Could not delete ${p}:`, e);
+
+        if (msg.status === "done") {
+          // Mark as extracted in store
+          const currentExtracted = store.get("extractedGroups") || [];
+          if (!currentExtracted.includes(extractKey)) {
+            store.set("extractedGroups", [...currentExtracted, extractKey]);
+          }
+
+          if (settings.deleteArchiveAfterExtract) {
+            // Find all parts and delete
+            const partDownloads = downloads.filter(d => {
+              if (download.groupId && d.groupId === download.groupId) return true;
+              const p = parseMultiPartArchive(d.filename);
+              return p.isMultiPart && p.baseName.toLowerCase() === multiPart.baseName.toLowerCase();
+            });
+
+            for (const d of partDownloads) {
+              try {
+                if (fs.existsSync(d.path)) {
+                  console.log(`[Extract] Deleting part: ${d.path}`);
+                  fs.unlinkSync(d.path);
+                }
+              } catch (e) {
+                console.warn(`[Extract] Could not delete ${d.path}:`, e);
+              }
             }
           }
         }
-        multiPartArchives.delete(multiPart.baseName);
       }
     };
     worker.on("message", messageHandler);
@@ -137,12 +134,14 @@ export function handleSingleExtraction(
 
   if (!isExtractable || multiPart.isMultiPart) return false;
 
-  const extractKey = `single:${download.path}`;
-  if (extractedArchives.has(extractKey)) {
+  // Check persistent store
+  const extractedGroups = store.get("extractedGroups") || [];
+  const extractKey = `single:${download.path.toLowerCase()}`;
+
+  if (extractedGroups.includes(extractKey)) {
     console.log(`[Download] Already extracted ${extractKey}, skipping`);
     return false;
   }
-  extractedArchives.add(extractKey);
 
   console.log(`[Download] Auto-extracting: ${download.filename}`);
   const outDir = path.dirname(download.path);
@@ -162,11 +161,20 @@ export function handleSingleExtraction(
     });
     if (msg.status === "done" || msg.status === "error") {
       worker.off("message", messageHandler);
-      if (msg.status === "done" && settings.deleteArchiveAfterExtract) {
-        try {
-          if (fs.existsSync(download.path)) fs.unlinkSync(download.path);
-        } catch (e) {
-          console.warn(`[Extract] Could not delete archive:`, e);
+
+      if (msg.status === "done") {
+        // Mark as extracted
+        const currentExtracted = store.get("extractedGroups") || [];
+        if (!currentExtracted.includes(extractKey)) {
+          store.set("extractedGroups", [...currentExtracted, extractKey]);
+        }
+
+        if (settings.deleteArchiveAfterExtract) {
+          try {
+            if (fs.existsSync(download.path)) fs.unlinkSync(download.path);
+          } catch (e) {
+            console.warn(`[Extract] Could not delete archive:`, e);
+          }
         }
       }
     }
