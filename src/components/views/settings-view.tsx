@@ -97,7 +97,7 @@ export function SettingsView() {
       } else {
         setSupportedHosts(result.hosts);
       }
-    } catch (err) {
+    } catch {
       setHostsError("Failed to fetch supported hosts");
     } finally {
       setHostsLoading(false);
@@ -199,7 +199,7 @@ export function SettingsView() {
             setRdLinkError(poll.error);
             return;
           }
-        } catch (err) {
+        } catch {
           if (rdPollTimerRef.current !== null) {
             window.clearInterval(rdPollTimerRef.current);
             rdPollTimerRef.current = null;
@@ -208,7 +208,7 @@ export function SettingsView() {
           setRdLinkError("Real-Debrid: polling failed");
         }
       }, Math.max(1, res.interval) * 1000);
-    } catch (err) {
+    } catch {
       setRdLinkError("Real-Debrid: failed to start device linking");
       setRdLinking(false);
     }
@@ -241,7 +241,7 @@ export function SettingsView() {
       setSettings(updated);
       setLocalSettings(updated);
       setShowDebridApiKey(true);
-    } catch (err) {
+    } catch {
       setRdLinkError("Failed to unlink Real-Debrid");
     }
   };
@@ -708,7 +708,7 @@ export function SettingsView() {
               />
             </div>
             <p className="text-xs text-amber-500">
-              ⚠️ Requires app restart to take effect
+              Warning: Requires app restart to take effect
             </p>
           </div>
         </section>
@@ -770,7 +770,7 @@ export function SettingsView() {
               </Button>
             </div>
             <p className="text-xs text-amber-500">
-              ⚠️ This action cannot be undone. Your downloaded files will remain on disk.
+              Warning: This action cannot be undone. Your downloaded files will remain on disk.
             </p>
           </div>
         </section>

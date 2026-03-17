@@ -40,6 +40,7 @@ export interface LimboAPI {
   getTorrents: () => Promise<TorrentInfo[]>;
   addTorrent: (magnetUri: string) => Promise<TorrentInfo>;
   addTorrentFile: (filePath: string) => Promise<TorrentInfo>;
+  addRemoteTorrent: (url: string) => Promise<TorrentInfo>;
   pauseTorrent: (id: string) => Promise<void>;
   resumeTorrent: (id: string) => Promise<void>;
   removeTorrent: (id: string, deleteFiles: boolean) => Promise<TorrentInfo[]>;
@@ -58,7 +59,10 @@ export interface LimboAPI {
 
   // Debrid
   isDebridConfigured: () => Promise<boolean>;
+  isDebridUrlSupported: (url: string) => Promise<boolean>;
+  isDebridTorrentSupported: () => Promise<boolean>;
   convertMagnetDebrid: (magnetUri: string) => Promise<string[]>;
+  convertTorrentFileDebrid: (torrentUrl: string) => Promise<string[]>;
   getSupportedHosts: () => Promise<{ hosts: string[]; error?: string }>;
   realDebridDeviceStart: () => Promise<
     | { success: true; userCode: string; verificationUrl: string; interval: number; expiresIn: number }
@@ -94,6 +98,7 @@ export interface LimboAPI {
       error?: string;
     }) => void
   ) => () => void;
+  onBrowserDownloadRequested: (callback: (request: BrowserDownloadRequest) => void) => () => void;
 }
 
 interface TorrentFile {
@@ -130,9 +135,13 @@ interface Download {
   path: string;
   size: number;
   downloaded: number;
-  status: "pending" | "downloading" | "paused" | "completed" | "error";
+  status: "pending" | "downloading" | "paused" | "completed" | "error" | "extracting" | "cancelled";
   speed?: number;
   eta?: number;
+  extractProgress?: number;
+  extractStatus?: string;
+  groupId?: string;
+  groupName?: string;
 }
 
 interface DownloadProgress {
@@ -140,6 +149,14 @@ interface DownloadProgress {
   downloaded: number;
   total: number;
   status: string;
+  speed?: number;
+  extractProgress?: number;
+  extractStatus?: string;
+}
+
+interface BrowserDownloadRequest {
+  url: string;
+  filename: string;
 }
 
 interface Settings {
@@ -149,9 +166,15 @@ interface Settings {
   enableSeeding: boolean;
   startOnBoot: boolean;
   requireVpn: boolean;
+  autoExtract: boolean;
+  deleteArchiveAfterExtract: boolean;
   debrid: {
     service: "realdebrid" | "alldebrid" | "premiumize" | null;
     apiKey: string;
+    refreshToken?: string;
+    expiresAt?: number;
+    clientId?: string;
+    clientSecret?: string;
   };
 }
 
@@ -159,6 +182,8 @@ interface TorrentInfo {
   id: string;
   name: string;
   magnetUri: string;
+  sourceType?: "magnet" | "file";
+  sourceValue?: string;
   size: number;
   downloaded: number;
   uploaded: number;
@@ -170,6 +195,7 @@ interface TorrentInfo {
   status: "downloading" | "seeding" | "paused" | "completed" | "error";
   path: string;
   infoHash?: string;
+  lastError?: string;
 }
 
 const api: LimboAPI = {
@@ -212,6 +238,7 @@ const api: LimboAPI = {
   getTorrents: () => ipcRenderer.invoke("get-torrents"),
   addTorrent: (magnetUri) => ipcRenderer.invoke("add-torrent", magnetUri),
   addTorrentFile: (filePath) => ipcRenderer.invoke("add-torrent-file", filePath),
+  addRemoteTorrent: (url) => ipcRenderer.invoke("add-remote-torrent", url),
   pauseTorrent: (id) => ipcRenderer.invoke("pause-torrent", id),
   resumeTorrent: (id) => ipcRenderer.invoke("resume-torrent", id),
   removeTorrent: (id, deleteFiles) => ipcRenderer.invoke("remove-torrent", id, deleteFiles),
@@ -230,7 +257,10 @@ const api: LimboAPI = {
 
   // Debrid
   isDebridConfigured: () => ipcRenderer.invoke("is-debrid-configured"),
+  isDebridUrlSupported: (url) => ipcRenderer.invoke("is-debrid-url-supported", url),
+  isDebridTorrentSupported: () => ipcRenderer.invoke("is-debrid-torrent-supported"),
   convertMagnetDebrid: (magnetUri) => ipcRenderer.invoke("convert-magnet-debrid", magnetUri),
+  convertTorrentFileDebrid: (torrentUrl) => ipcRenderer.invoke("convert-torrent-file-debrid", torrentUrl),
   getSupportedHosts: () => ipcRenderer.invoke("get-supported-hosts"),
   realDebridDeviceStart: () => ipcRenderer.invoke("realdebrid-device-start"),
   realDebridDevicePoll: () => ipcRenderer.invoke("realdebrid-device-poll"),
@@ -306,6 +336,11 @@ const api: LimboAPI = {
     ) => callback(data);
     ipcRenderer.on("extraction-progress", handler);
     return () => ipcRenderer.removeListener("extraction-progress", handler);
+  },
+  onBrowserDownloadRequested: (callback) => {
+    const handler = (_: IpcRendererEvent, request: BrowserDownloadRequest) => callback(request);
+    ipcRenderer.on("browser-download-requested", handler);
+    return () => ipcRenderer.removeListener("browser-download-requested", handler);
   },
 };
 

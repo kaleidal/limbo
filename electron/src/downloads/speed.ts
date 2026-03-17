@@ -1,7 +1,5 @@
 // Download speed tracking utilities
 
-import type { Download } from "../types.js";
-
 // Active download items
 export const activeDownloads = new Map<string, Electron.DownloadItem>();
 

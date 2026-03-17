@@ -2,7 +2,12 @@
 
 import { ipcMain, BrowserWindow } from "electron";
 import { store } from "../store.js";
-import { convertMagnetWithDebrid, getSupportedHosts } from "../debrid.js";
+import {
+  convertMagnetWithDebrid,
+  convertTorrentFileWithDebrid,
+  getSupportedHosts,
+  supportsDebridTorrentFiles,
+} from "../debrid.js";
 
 type RealDebridDeviceState = {
   deviceCode: string;
@@ -12,8 +17,39 @@ type RealDebridDeviceState = {
   expiresAt: number;
 };
 
+type RealDebridDeviceCodeResponse = {
+  device_code?: string;
+  user_code?: string;
+  verification_url?: string;
+  interval?: number;
+  expires_in?: number;
+};
+
+type RealDebridCredentialsResponse = {
+  client_id?: string;
+  client_secret?: string;
+};
+
+type RealDebridTokenResponse = {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+};
+
 const RD_PUBLIC_CLIENT_ID = "X245A4XAIBGVM";
 let rdDeviceState: RealDebridDeviceState | null = null;
+
+function hostMatchesSupportedHosts(url: string, hosts: string[]) {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hosts.some((host) => {
+      const normalized = host.toLowerCase();
+      return hostname === normalized || hostname.endsWith(`.${normalized}`);
+    });
+  } catch {
+    return false;
+  }
+}
 
 export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null) {
   ipcMain.handle("is-debrid-configured", () => {
@@ -36,6 +72,20 @@ export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null
     return links;
   });
 
+  ipcMain.handle("convert-torrent-file-debrid", async (_, torrentUrl: string) => {
+    const settings = store.get("settings");
+    if (!settings.debrid.service || !settings.debrid.apiKey) {
+      throw new Error("Debrid service not configured");
+    }
+
+    const links = await convertTorrentFileWithDebrid(torrentUrl, settings.debrid);
+    if (!links || links.length === 0) {
+      throw new Error("Failed to convert torrent file");
+    }
+
+    return links;
+  });
+
   // Get supported hosts from the configured debrid service
   ipcMain.handle("get-supported-hosts", async () => {
     const settings = store.get("settings");
@@ -43,6 +93,25 @@ export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null
       return { hosts: [], error: "No debrid service configured" };
     }
     return getSupportedHosts(settings.debrid);
+  });
+
+  ipcMain.handle("is-debrid-url-supported", async (_, url: string) => {
+    const settings = store.get("settings");
+    if (!settings.debrid.service || !settings.debrid.apiKey) {
+      return false;
+    }
+
+    const supported = await getSupportedHosts(settings.debrid);
+    if (supported.error || supported.hosts.length === 0) {
+      return false;
+    }
+
+    return hostMatchesSupportedHosts(url, supported.hosts);
+  });
+
+  ipcMain.handle("is-debrid-torrent-supported", async () => {
+    const settings = store.get("settings");
+    return supportsDebridTorrentFiles(settings.debrid);
   });
 
   // Real-Debrid device linking (OAuth device flow)
@@ -58,7 +127,7 @@ export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null
       return { success: false, error: `Real-Debrid: ${response.status} ${response.statusText} ${err}` };
     }
 
-    const data: any = await response.json();
+    const data = (await response.json()) as RealDebridDeviceCodeResponse;
     if (!data?.device_code || !data?.user_code || !data?.verification_url) {
       return { success: false, error: "Real-Debrid: Unexpected device code response" };
     }
@@ -109,7 +178,7 @@ export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null
       return { status: "pending" as const };
     }
 
-    const creds: any = await credsResp.json().catch(() => null);
+    const creds = (await credsResp.json().catch(() => null)) as RealDebridCredentialsResponse | null;
     if (!creds?.client_id || !creds?.client_secret) {
       return { status: "pending" as const };
     }
@@ -135,7 +204,7 @@ export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null
       };
     }
 
-    const token: any = await tokenResp.json().catch(() => null);
+    const token = (await tokenResp.json().catch(() => null)) as RealDebridTokenResponse | null;
     if (!token?.access_token) {
       return { status: "error" as const, error: "Real-Debrid: No access_token returned" };
     }
@@ -148,7 +217,7 @@ export function registerDebridHandlers(getMainWindow: () => BrowserWindow | null
         service: "realdebrid",
         apiKey: token.access_token,
         refreshToken: token.refresh_token,
-        expiresAt: Date.now() + (token.expires_in * 1000),
+        expiresAt: Date.now() + ((token.expires_in || 0) * 1000),
         clientId: creds.client_id,
         clientSecret: creds.client_secret,
       },

@@ -2,13 +2,12 @@
 
 import { app, BrowserWindow, clipboard, session, dialog } from "electron";
 import path from "path";
-import fs from "fs";
 import { fileURLToPath } from "url";
 import Store from "electron-store";
 import electronUpdater from "electron-updater";
 import log from "electron-log";
 
-import { store } from "./src/store.js";
+import type { Settings } from "./src/types.js";
 import { findMagnetArg, findTorrentFileArg } from "./src/utils.js";
 import { isDownloadableUrl } from "./src/file-hosts.js";
 import { initTorrentWorker, setTorrentEventHandler, shutdownTorrentWorker } from "./src/torrent.js";
@@ -33,7 +32,7 @@ if (process.platform === "win32") {
 
 // Check hardware acceleration setting early
 const tempStore = new Store({ name: "config" });
-const settings = tempStore.get("settings") as any;
+const settings = tempStore.get("settings") as Partial<Settings> | undefined;
 if (settings && settings.hardwareAcceleration === false) {
   app.disableHardwareAcceleration();
   console.log("Hardware acceleration disabled by user setting");
@@ -85,7 +84,12 @@ function initAutoUpdater() {
 
   try {
     autoUpdater.logger = log;
-    (log.transports.file as any).level = "info";
+    type ElectronLogWithFile = typeof log & {
+      transports: {
+        file: { level: string };
+      };
+    };
+    (log as ElectronLogWithFile).transports.file.level = "info";
 
     autoUpdater.on("checking-for-update", () => log.info("Checking for updates..."));
     autoUpdater.on("update-available", (info) => log.info("Update available", info));
@@ -139,8 +143,8 @@ function startClipboardMonitoring() {
           mainWindow?.webContents.send("clipboard-download-detected", detectedUrls);
         }
       }
-    } catch {
-      // Ignore clipboard access errors
+    } catch (error) {
+      console.warn("Clipboard monitoring skipped due to access error", error);
     }
   }, 100);
 }
@@ -164,8 +168,7 @@ function createWindow() {
     },
   });
 
-  // Persistent session
-  const ses = session.fromPartition("persist:limbo");
+  session.fromPartition("persist:limbo");
 
   app.on("web-contents-created", (_, contents) => {
     if (contents.getType() === "webview") {

@@ -13,10 +13,12 @@ export function registerSettingsHandlers(getMainWindow: () => BrowserWindow | nu
   ipcMain.handle("clear-data", async () => {
     try {
       // Cancel all active downloads
-      for (const [id, item] of activeDownloads) {
+      for (const [, item] of activeDownloads) {
         try {
           item.cancel();
-        } catch {}
+        } catch (error) {
+          console.warn("[Settings] Failed to cancel active download during clear-data", error);
+        }
       }
       activeDownloads.clear();
 
@@ -24,7 +26,9 @@ export function registerSettingsHandlers(getMainWindow: () => BrowserWindow | nu
       for (const id of activeTorrentIds) {
         try {
           await callTorrentWorker({ type: "remove", torrentId: id, deleteFiles: false }, 5000);
-        } catch {}
+        } catch (error) {
+          console.warn(`[Settings] Failed to remove torrent ${id} during clear-data`, error);
+        }
       }
       activeTorrentIds.clear();
 
@@ -32,6 +36,7 @@ export function registerSettingsHandlers(getMainWindow: () => BrowserWindow | nu
       store.set("downloads", []);
       store.set("torrents", []);
       store.set("library", []);
+      store.set("extractedGroups", []);
 
       // Reset settings to defaults but keep download path
       const currentSettings = store.get("settings");

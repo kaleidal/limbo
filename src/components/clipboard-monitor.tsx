@@ -7,6 +7,7 @@ export function ClipboardMonitor() {
   const [detectedUrls, setDetectedUrls] = useState<string[]>([]);
   const [isVisible, setIsVisible] = useState(false);
   const [debridAvailable, setDebridAvailable] = useState(false);
+  const [debridSupportedForDetectedUrls, setDebridSupportedForDetectedUrls] = useState(false);
   const [torrentSupported, setTorrentSupported] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +67,48 @@ export function ClipboardMonitor() {
     };
   }, [currentView]);
 
+  useEffect(() => {
+    if (!window.limbo || !debridAvailable || detectedUrls.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    const checkSupport = async () => {
+      const nonMagnetUrls = detectedUrls.filter((url) => !url.startsWith("magnet:"));
+      if (nonMagnetUrls.length === 0) {
+        if (!cancelled) {
+          setDebridSupportedForDetectedUrls(true);
+        }
+        return;
+      }
+
+      const supportChecks = await Promise.all(
+        nonMagnetUrls.map((url) => window.limbo.isDebridUrlSupported(url).catch(() => false))
+      );
+
+      if (!cancelled) {
+        setDebridSupportedForDetectedUrls(supportChecks.every(Boolean));
+      }
+    };
+
+    checkSupport();
+    return () => {
+      cancelled = true;
+    };
+  }, [debridAvailable, detectedUrls]);
+
+  const getFriendlyError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("VPN_REQUIRED")) {
+      return "VPN required for torrents. Enable VPN or disable check in Settings.";
+    }
+    if (message.includes("Error invoking remote method")) {
+      const match = message.match(/Error invoking remote method '[^']+': (.+)/);
+      return match?.[1] || message;
+    }
+    return message || "Download failed";
+  };
+
   const handleDownloadAll = async (useDebrid: boolean) => {
     if (!detectedUrls.length || !window.limbo) return;
     setIsProcessing(true);
@@ -99,18 +142,8 @@ export function ClipboardMonitor() {
         }
         completed++;
         setSuccessCount(completed);
-      } catch (err: any) {
-        // Parse error message for user-friendly display
-        const errMsg = err?.message || "Download failed";
-        if (errMsg.includes("VPN_REQUIRED")) {
-          errors.push("VPN required for torrents. Enable VPN or disable check in Settings.");
-        } else if (errMsg.includes("Error invoking remote method")) {
-          // Extract the actual error from IPC wrapper
-          const match = errMsg.match(/Error invoking remote method '[^']+': (.+)/);
-          errors.push(match?.[1] || errMsg);
-        } else {
-          errors.push(errMsg);
-        }
+      } catch (error: unknown) {
+        errors.push(getFriendlyError(error));
       }
     }
 
@@ -133,7 +166,7 @@ export function ClipboardMonitor() {
       // Show debrid warning if there were issues but downloads still started
       if (warnings.length > 0 && errors.length === 0) {
         // Show the first warning - these are non-fatal
-        setError(`⚠️ ${warnings[0]}`);
+        setError(`Warning: ${warnings[0]}`);
         // Keep visible longer for warnings
         setTimeout(() => {
           setIsVisible(false);
@@ -155,7 +188,7 @@ export function ClipboardMonitor() {
       );
       
       if (isFileHostError && !debridAvailable) {
-        setError("File host requires Debrid service. Configure in Settings → Debrid Service.");
+        setError("File host requires Debrid service. Configure in Settings -> Debrid Service.");
       } else {
         setError(`${errors.length} failed: ${errors[0]}`);
       }
@@ -166,6 +199,7 @@ export function ClipboardMonitor() {
     setIsVisible(false);
     setDetectedUrls([]);
     setError(null);
+    setDebridSupportedForDetectedUrls(false);
   };
 
   if (!isVisible || detectedUrls.length === 0) return null;
@@ -235,7 +269,7 @@ export function ClipboardMonitor() {
 
         <div className="flex flex-col gap-2 mt-3">
           {/* Debrid option (preferred for magnets) */}
-          {debridAvailable && (
+          {debridAvailable && debridSupportedForDetectedUrls && (
             <Button
               onClick={() => handleDownloadAll(true)}
               disabled={isProcessing}
@@ -252,7 +286,7 @@ export function ClipboardMonitor() {
             <Button
               onClick={() => handleDownloadAll(false)}
               disabled={isProcessing}
-              variant={debridAvailable ? "outline" : "default"}
+              variant={debridAvailable && debridSupportedForDetectedUrls ? "outline" : "default"}
               size="sm"
               className="w-full gap-2"
             >
@@ -269,6 +303,12 @@ export function ClipboardMonitor() {
           {hasMagnets && !torrentSupported && !debridAvailable && (
             <p className="text-xs text-amber-500 text-center">
               Configure a Debrid service in Settings to download magnet links
+            </p>
+          )}
+
+          {!hasMagnets && debridAvailable && !debridSupportedForDetectedUrls && (
+            <p className="text-xs text-amber-500 text-center">
+              This host is not supported by your configured Debrid service
             </p>
           )}
 

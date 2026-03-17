@@ -10,7 +10,17 @@ type ExtractJob = {
   outDir: string;
 };
 
-function post(msg: any) {
+type ExtractWorkerMessage = {
+  archivePath: string;
+  status: "progress" | "done" | "error";
+  percent?: number;
+  message?: string;
+  extractDir?: string | null;
+  success?: boolean;
+  error?: string;
+};
+
+function post(msg: ExtractWorkerMessage) {
   parentPort?.postMessage(msg);
 }
 
@@ -82,13 +92,13 @@ async function extract(job: ExtractJob) {
 
     // Unsupported format
     post({ archivePath: filePath, status: "error", extractDir: null, success: false, error: "Unsupported format" });
-  } catch (err: any) {
+  } catch (err: unknown) {
     post({
       archivePath: filePath,
       status: "error",
       extractDir: null,
       success: false,
-      error: err?.message || "Extraction failed",
+      error: err instanceof Error ? err.message : "Extraction failed",
     });
   }
 }

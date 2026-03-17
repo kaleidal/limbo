@@ -9,26 +9,47 @@ import {
   Unlock,
   ExternalLink,
   AlertCircle,
+  Popcorn,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import type { ElectronWebviewElement } from "@/types/electron.d";
+import type { Bookmark, ElectronWebviewElement } from "@/types/electron.d";
+
+type WebviewNavigationEvent = Event & {
+  url: string;
+  errorCode?: number;
+  errorDescription?: string;
+  preventDefault?: () => void;
+};
 
 export function BrowserView() {
-  const { activeBookmark } = useAppStore();
+  const { activeBookmark, clearExpiredBrowserSessions } = useAppStore();
+
+  useEffect(() => {
+    clearExpiredBrowserSessions();
+  }, [clearExpiredBrowserSessions]);
+
+  if (!activeBookmark) {
+    return (
+      <div className="h-full flex items-center justify-center text-neutral-500">
+        <p>Select a site from the sidebar to browse</p>
+      </div>
+    );
+  }
+
+  return <BookmarkBrowser key={activeBookmark.id} bookmark={activeBookmark} />;
+}
+
+function BookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
+  const { getBrowserSessionUrl, rememberBrowserSession } = useAppStore();
   const webviewRef = useRef<ElectronWebviewElement>(null);
-  const [currentUrl, setCurrentUrl] = useState(activeBookmark?.url || "");
+  const initialUrl = getBrowserSessionUrl(bookmark.id, bookmark.url);
+  const [currentUrl, setCurrentUrl] = useState(initialUrl);
   const [isLoading, setIsLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
-  const [isSecure, setIsSecure] = useState(false);
+  const [isSecure, setIsSecure] = useState(initialUrl.startsWith("https://"));
+  const [blockPopups, setBlockPopups] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (activeBookmark) {
-      setCurrentUrl(activeBookmark.url);
-      setError(null);
-    }
-  }, [activeBookmark]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -38,43 +59,57 @@ export function BrowserView() {
       setIsLoading(true);
       setError(null);
     };
+
     const handleDidStopLoading = () => {
       setIsLoading(false);
       try {
         setCanGoBack(webview.canGoBack());
         setCanGoForward(webview.canGoForward());
-      } catch (e) {
-        // Webview not ready
+      } catch {
+        // Webview can briefly disappear during navigation resets.
       }
     };
-    const handleDidNavigate = (e: any) => {
-      setCurrentUrl(e.url);
-      setIsSecure(e.url.startsWith("https://"));
+
+    const handleDidNavigate = (event: Event) => {
+      const navigationEvent = event as WebviewNavigationEvent;
+      setCurrentUrl(navigationEvent.url);
+      setIsSecure(navigationEvent.url.startsWith("https://"));
+      rememberBrowserSession(bookmark.id, navigationEvent.url);
     };
-    const handleDidNavigateInPage = (e: any) => {
-      setCurrentUrl(e.url);
+
+    const handleDidNavigateInPage = (event: Event) => {
+      const navigationEvent = event as WebviewNavigationEvent;
+      setCurrentUrl(navigationEvent.url);
+      setIsSecure(navigationEvent.url.startsWith("https://"));
+      rememberBrowserSession(bookmark.id, navigationEvent.url);
     };
-    const handleDidFailLoad = (e: any) => {
-      if (e.errorCode !== -3) { // Ignore ERR_ABORTED
-        setError(`Failed to load: ${e.errorDescription || 'Unknown error'}`);
+
+    const handleDidFailLoad = (event: Event) => {
+      const navigationEvent = event as WebviewNavigationEvent;
+      if (navigationEvent.errorCode !== -3) {
+        setError(`Failed to load: ${navigationEvent.errorDescription || "Unknown error"}`);
       }
       setIsLoading(false);
     };
 
-    // Intercept magnet links - copy to clipboard so clipboard monitor handles it
-    const handleWillNavigate = (e: any) => {
-      if (e.url && e.url.startsWith('magnet:')) {
-        e.preventDefault?.();
-        // Copy to clipboard - the clipboard monitor will detect it
-        navigator.clipboard.writeText(e.url).catch(() => {});
+    const handleWillNavigate = (event: Event) => {
+      const navigationEvent = event as WebviewNavigationEvent;
+      if (navigationEvent.url.startsWith("magnet:")) {
+        navigationEvent.preventDefault?.();
+        navigator.clipboard.writeText(navigationEvent.url).catch(() => undefined);
       }
     };
 
-    // Also intercept new-window events for magnet links
-    const handleNewWindow = (e: any) => {
-      if (e.url && e.url.startsWith('magnet:')) {
-        e.preventDefault?.();
-        navigator.clipboard.writeText(e.url).catch(() => {});
+    const handleNewWindow = (event: Event) => {
+      const navigationEvent = event as WebviewNavigationEvent;
+      if (blockPopups) {
+        navigationEvent.preventDefault?.();
+        return;
+      }
+
+      if (navigationEvent.url.startsWith("magnet:")) {
+        navigationEvent.preventDefault?.();
+        navigator.clipboard.writeText(navigationEvent.url).catch(() => undefined);
       }
     };
 
@@ -95,45 +130,44 @@ export function BrowserView() {
       webview.removeEventListener("will-navigate", handleWillNavigate);
       webview.removeEventListener("new-window", handleNewWindow);
     };
-  }, []);
+  }, [blockPopups, bookmark.id, rememberBrowserSession]);
 
   const handleGoBack = () => webviewRef.current?.goBack();
   const handleGoForward = () => webviewRef.current?.goForward();
   const handleReload = () => webviewRef.current?.reload();
   const handleHome = () => {
-    if (activeBookmark && webviewRef.current) {
-      webviewRef.current.src = activeBookmark.url;
+    if (webviewRef.current) {
+      webviewRef.current.src = bookmark.url;
+      setCurrentUrl(bookmark.url);
+      setIsSecure(bookmark.url.startsWith("https://"));
+      rememberBrowserSession(bookmark.id, bookmark.url);
+      setError(null);
     }
   };
 
-  const handleUrlSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (webviewRef.current) {
-      let url = currentUrl;
-      if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        url = "https://" + url;
-      }
-      webviewRef.current.src = url;
+  const handleUrlSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!webviewRef.current) return;
+
+    let nextUrl = currentUrl.trim();
+    if (!nextUrl.startsWith("http://") && !nextUrl.startsWith("https://")) {
+      nextUrl = `https://${nextUrl}`;
     }
+
+    webviewRef.current.src = nextUrl;
+    setCurrentUrl(nextUrl);
+    setIsSecure(nextUrl.startsWith("https://"));
+    rememberBrowserSession(bookmark.id, nextUrl);
   };
 
   const handleOpenExternal = () => {
-    if (currentUrl) {
-      window.open(currentUrl, "_blank");
+    if (currentUrl && window.limbo) {
+      window.limbo.openExternal(currentUrl).catch(() => undefined);
     }
   };
 
-  if (!activeBookmark) {
-    return (
-      <div className="h-full flex items-center justify-center text-neutral-500">
-        <p>Select a site from the sidebar to browse</p>
-      </div>
-    );
-  }
-
   return (
     <div className="h-full flex flex-col bg-neutral-950">
-      {/* Browser toolbar */}
       <div className="flex items-center gap-2 p-2 bg-neutral-900 border-b border-neutral-800">
         <button
           onClick={handleGoBack}
@@ -173,12 +207,24 @@ export function BrowserView() {
             </div>
             <Input
               value={currentUrl}
-              onChange={(e) => setCurrentUrl(e.target.value)}
+              onChange={(event) => setCurrentUrl(event.target.value)}
               className="pl-10 bg-neutral-800 border-neutral-700 text-sm"
               placeholder="Enter URL..."
             />
           </div>
         </form>
+
+        <button
+          onClick={() => setBlockPopups((current) => !current)}
+          className={`p-2 rounded transition-colors ${
+            blockPopups
+              ? "bg-red-500/15 text-red-400 hover:bg-red-500/25"
+              : "hover:bg-neutral-800 text-neutral-400"
+          }`}
+          title={blockPopups ? "Popups blocked" : "Popups allowed"}
+        >
+          <Popcorn className="w-4 h-4" />
+        </button>
 
         <button
           onClick={handleOpenExternal}
@@ -189,7 +235,6 @@ export function BrowserView() {
         </button>
       </div>
 
-      {/* Error display */}
       {error && (
         <div className="flex items-center gap-2 p-3 bg-red-950/50 border-b border-red-900 text-red-400">
           <AlertCircle className="w-4 h-4 shrink-0" />
@@ -203,15 +248,12 @@ export function BrowserView() {
         </div>
       )}
 
-      {/* Webview */}
       <webview
         ref={webviewRef}
-        src={activeBookmark.url}
+        src={initialUrl}
         className="flex-1 w-full"
         partition="persist:limbo"
-        // @ts-ignore - webview attributes
-        allowpopups="true"
-        // @ts-ignore
+        allowpopups={true}
         webpreferences="javascript=yes"
       />
     </div>

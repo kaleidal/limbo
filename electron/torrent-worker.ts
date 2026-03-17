@@ -28,37 +28,115 @@ type WorkerRequest =
   | { type: "set-seeding"; enableSeeding: boolean }
   | { type: "get-files"; requestId: string; infoHash: string };
 
-type WorkerResponse = { type: "response"; requestId: string; ok: true; data?: any } | { type: "response"; requestId: string; ok: false; error: string };
+type WorkerResponse =
+  | { type: "response"; requestId: string; ok: true; data?: unknown }
+  | { type: "response"; requestId: string; ok: false; error: string };
+
+type TorrentMetadataEvent = {
+  id: string;
+  name: string;
+  size: number;
+  magnetUri: string;
+  infoHash?: string;
+};
+
+type TorrentProgressEvent = {
+  id: string;
+  downloaded: number;
+  uploaded: number;
+  progress: number;
+  downloadSpeed: number;
+  uploadSpeed: number;
+  peers: number;
+  seeds: number;
+  done: boolean;
+};
+
+type TorrentErrorEvent = {
+  id: string;
+  error: string;
+};
 
 type WorkerEvent =
   | { type: "ready"; ok: true; streamServerPort: number }
   | { type: "ready"; ok: false; error: string }
-  | { type: "event"; event: "torrent-metadata"; payload: any }
-  | { type: "event"; event: "torrent-progress"; payload: any }
-  | { type: "event"; event: "torrent-done"; payload: any }
-  | { type: "event"; event: "torrent-error"; payload: any };
+  | { type: "event"; event: "torrent-metadata"; payload: TorrentMetadataEvent }
+  | { type: "event"; event: "torrent-progress"; payload: TorrentProgressEvent }
+  | { type: "event"; event: "torrent-done"; payload: { id: string } }
+  | { type: "event"; event: "torrent-error"; payload: TorrentErrorEvent };
 
-let torrentClient: any = null;
+type TorrentSourceMeta = {
+  magnetUri: string;
+  downloadPath: string;
+  announce: string[];
+};
+
+type WireLike = {
+  choke?: () => void;
+  on?: (event: string, listener: () => void) => void;
+};
+
+type TorrentFile = {
+  name: string;
+  path: string;
+  length: number;
+  downloaded: number;
+  progress: number;
+  createReadStream: (options?: { start?: number; end?: number }) => NodeJS.ReadableStream;
+};
+
+type TorrentLike = {
+  name?: string;
+  magnetURI?: string;
+  infoHash?: string;
+  length?: number;
+  downloaded?: number;
+  uploaded?: number;
+  progress?: number;
+  downloadSpeed?: number;
+  uploadSpeed?: number;
+  numPeers?: number;
+  done?: boolean;
+  files: TorrentFile[];
+  wires?: WireLike[];
+  pause?: () => void;
+  resume?: () => void;
+  destroy?: (optionsOrCallback?: { destroyStore?: boolean } | (() => void), callback?: () => void) => void;
+  on: (event: string, listener: (...args: unknown[]) => void) => void;
+  once: (event: string, listener: (...args: unknown[]) => void) => void;
+  __limboNoUploadApplied?: boolean;
+  __limboNoUploadInterval?: NodeJS.Timeout | null;
+  __limboProgressInterval?: NodeJS.Timeout | null;
+};
+
+type WebTorrentClient = {
+  add: (
+    source: string | Buffer,
+    options: { path: string; announce: string[] }
+  ) => TorrentLike;
+  get: (infoHash: string) => TorrentLike | undefined;
+  destroy: (callback: () => void) => void;
+};
+
+function logIgnoredError(context: string, error: unknown) {
+  console.warn(`[torrent-worker] ${context}`, error);
+}
+
+let torrentClient: WebTorrentClient | null = null;
 let streamServer: http.Server | null = null;
 let streamServerPort = 0;
 let enableSeeding = false;
 let publicTrackers: string[] = [];
 
-const torrentsById = new Map<string, any>();
-const torrentMetaById = new Map<
-  string,
-  { magnetUri: string; downloadPath: string; announce: string[] }
->();
-const pausedTorrentMetaById = new Map<
-  string,
-  { magnetUri: string; downloadPath: string; announce: string[] }
->();
+const torrentsById = new Map<string, TorrentLike>();
+const torrentMetaById = new Map<string, TorrentSourceMeta>();
+const pausedTorrentMetaById = new Map<string, TorrentSourceMeta>();
 
-function post(msg: WorkerResponse | WorkerEvent) {
-  parentPort?.postMessage(msg);
+function post(message: WorkerResponse | WorkerEvent) {
+  parentPort?.postMessage(message);
 }
 
-function respondOk(requestId: string, data?: any) {
+function respondOk(requestId: string, data?: unknown) {
   post({ type: "response", requestId, ok: true, data });
 }
 
@@ -90,22 +168,29 @@ function getMimeType(filename: string): string {
   return mimeTypes[ext] || "application/octet-stream";
 }
 
-function applyTorrentUploadPolicy(torrent: any, allowSeeding: boolean) {
-  const attachNoUpload = (wire: any) => {
+function applyTorrentUploadPolicy(torrent: TorrentLike, allowSeeding: boolean) {
+  const attachNoUpload = (wire: WireLike) => {
     try {
       wire.choke?.();
-    } catch {}
+    } catch (error) {
+      logIgnoredError("Failed to choke wire", error);
+    }
+
     try {
       wire.on?.("unchoke", () => {
         try {
           wire.choke?.();
-        } catch {}
+        } catch (error) {
+          logIgnoredError("Failed to re-choke wire after unchoke", error);
+        }
       });
-    } catch {}
+    } catch (error) {
+      logIgnoredError("Failed to attach wire unchoke listener", error);
+    }
   };
 
   if (allowSeeding) {
-    if (torrent?.__limboNoUploadInterval) {
+    if (torrent.__limboNoUploadInterval) {
       clearInterval(torrent.__limboNoUploadInterval);
       torrent.__limboNoUploadInterval = null;
     }
@@ -117,31 +202,45 @@ function applyTorrentUploadPolicy(torrent: any, allowSeeding: boolean) {
   torrent.__limboNoUploadApplied = true;
 
   try {
-    torrent.on?.("wire", attachNoUpload);
-  } catch {}
+    torrent.on("wire", (...args: unknown[]) => {
+      const [wire] = args;
+      if (wire && typeof wire === "object") {
+        attachNoUpload(wire as WireLike);
+      }
+    });
+  } catch (error) {
+    logIgnoredError("Failed to attach torrent wire listener", error);
+  }
+
   try {
     if (Array.isArray(torrent.wires)) {
-      for (const w of torrent.wires) attachNoUpload(w);
+      for (const wire of torrent.wires) attachNoUpload(wire);
     }
-  } catch {}
+  } catch (error) {
+    logIgnoredError("Failed to apply no-upload policy to existing wires", error);
+  }
 
   torrent.__limboNoUploadInterval = setInterval(() => {
     try {
-      if (Array.isArray(torrent.wires)) {
-        for (const w of torrent.wires) {
-          try {
-            w.choke?.();
-          } catch {}
+      if (!Array.isArray(torrent.wires)) return;
+      for (const wire of torrent.wires) {
+        try {
+          wire.choke?.();
+        } catch (error) {
+          logIgnoredError("Failed to choke wire during no-upload interval", error);
         }
       }
-    } catch {}
+    } catch (error) {
+      logIgnoredError("Failed to enforce no-upload policy", error);
+    }
   }, 1500);
 }
 
 async function ensureTorrentClient() {
   if (torrentClient) return;
-  const WebTorrent = await import("webtorrent");
-  torrentClient = new WebTorrent.default();
+  const webTorrentModule = await import("webtorrent");
+  const WebTorrentCtor = webTorrentModule.default as unknown as new () => WebTorrentClient;
+  torrentClient = new WebTorrentCtor();
 }
 
 async function ensureStreamServer() {
@@ -151,26 +250,28 @@ async function ensureStreamServer() {
     const match = req.url?.match(/^\/stream\/([0-9a-f]{40})(?:\/(.*))?$/);
     if (!match) {
       res.statusCode = 404;
-      return res.end("Not found");
+      res.end("Not found");
+      return;
     }
 
     const infoHash = match[1];
     const fileName = match[2] ? decodeURIComponent(match[2]) : null;
     const torrent = torrentClient?.get(infoHash);
-
     if (!torrent) {
       res.statusCode = 404;
-      return res.end("Torrent not found");
+      res.end("Torrent not found");
+      return;
     }
 
     let file = fileName
-      ? torrent.files.find((f: any) => f.name === fileName)
-      : torrent.files.find((f: any) => f.name.match(/\.(mp4|mkv|avi|mov|webm)$/i));
+      ? torrent.files.find((entry) => entry.name === fileName)
+      : torrent.files.find((entry) => entry.name.match(/\.(mp4|mkv|avi|mov|webm)$/i));
 
     if (!file) file = torrent.files[0];
     if (!file) {
       res.statusCode = 404;
-      return res.end("No file found");
+      res.end("No file found");
+      return;
     }
 
     const range = req.headers.range;
@@ -178,8 +279,8 @@ async function ensureStreamServer() {
 
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const start = Number.parseInt(parts[0], 10);
+      const end = parts[1] ? Number.parseInt(parts[1], 10) : fileSize - 1;
       const chunkSize = end - start + 1;
 
       res.writeHead(206, {
@@ -189,47 +290,69 @@ async function ensureStreamServer() {
         "Content-Type": getMimeType(file.name),
       });
 
-      const stream = file.createReadStream({ start, end });
-      stream.pipe(res);
-    } else {
-      res.writeHead(200, {
-        "Content-Length": fileSize,
-        "Content-Type": getMimeType(file.name),
-      });
-      file.createReadStream().pipe(res);
+      file.createReadStream({ start, end }).pipe(res);
+      return;
     }
+
+    res.writeHead(200, {
+      "Content-Length": fileSize,
+      "Content-Type": getMimeType(file.name),
+    });
+    file.createReadStream().pipe(res);
   });
 
   await new Promise<void>((resolve, reject) => {
-    streamServer!.once("error", reject);
-    streamServer!.listen(0, "127.0.0.1", () => resolve());
+    streamServer?.once("error", reject);
+    streamServer?.listen(0, "127.0.0.1", () => resolve());
   });
 
-  const addr = streamServer.address();
-  if (addr && typeof addr === "object") {
-    streamServerPort = addr.port;
+  const address = streamServer.address();
+  if (address && typeof address === "object") {
+    streamServerPort = address.port;
   }
 }
 
-function attachTorrentLifecycle(torrentId: string, torrent: any) {
-  torrent.on("warning", (warn: any) => {
-    post({ type: "event", event: "torrent-error", payload: { id: torrentId, error: String(warn?.message || warn) } });
+function safeStopTorrent(torrent: TorrentLike) {
+  if (torrent.__limboProgressInterval) {
+    clearInterval(torrent.__limboProgressInterval);
+    torrent.__limboProgressInterval = null;
+  }
+
+  if (torrent.__limboNoUploadInterval) {
+    clearInterval(torrent.__limboNoUploadInterval);
+    torrent.__limboNoUploadInterval = null;
+  }
+}
+
+function attachTorrentLifecycle(torrentId: string, torrent: TorrentLike) {
+  torrent.on("warning", (...args: unknown[]) => {
+    const [warning] = args;
+    post({
+      type: "event",
+      event: "torrent-error",
+      payload: { id: torrentId, error: warning instanceof Error ? warning.message : String(warning) },
+    });
   });
 
-  torrent.on("error", (err: any) => {
-    post({ type: "event", event: "torrent-error", payload: { id: torrentId, error: String(err?.message || err) } });
+  torrent.on("error", (...args: unknown[]) => {
+    const [error] = args;
+    post({
+      type: "event",
+      event: "torrent-error",
+      payload: { id: torrentId, error: error instanceof Error ? error.message : String(error) },
+    });
   });
 
   const sendMetadata = () => {
-    const name = torrent.name || "Loading torrent…";
+    const name = torrent.name || "Loading torrent...";
     const meta = torrentMetaById.get(torrentId);
     if (meta) {
-      const nextMagnet = torrent.magnetURI || meta.magnetUri;
       torrentMetaById.set(torrentId, {
         ...meta,
-        magnetUri: nextMagnet,
+        magnetUri: torrent.magnetURI || meta.magnetUri,
       });
     }
+
     post({
       type: "event",
       event: "torrent-metadata",
@@ -246,7 +369,7 @@ function attachTorrentLifecycle(torrentId: string, torrent: any) {
   torrent.once("metadata", sendMetadata);
   torrent.once("ready", sendMetadata);
 
-  const interval = setInterval(() => {
+  torrent.__limboProgressInterval = setInterval(() => {
     post({
       type: "event",
       event: "torrent-progress",
@@ -259,25 +382,21 @@ function attachTorrentLifecycle(torrentId: string, torrent: any) {
         uploadSpeed: enableSeeding ? (torrent.uploadSpeed || 0) : 0,
         peers: torrent.numPeers || 0,
         seeds: torrent.numPeers || 0,
-        done: !!torrent.done,
+        done: Boolean(torrent.done),
       },
     });
   }, 1000);
 
-  torrent.__limboProgressInterval = interval;
-
   torrent.on("done", () => {
-    if (torrent.__limboProgressInterval) {
-      clearInterval(torrent.__limboProgressInterval);
-      torrent.__limboProgressInterval = null;
-    }
-
+    safeStopTorrent(torrent);
     post({ type: "event", event: "torrent-done", payload: { id: torrentId } });
 
     if (!enableSeeding) {
       try {
         torrent.destroy?.({ destroyStore: false });
-      } catch {}
+      } catch (error) {
+        logIgnoredError("Failed to destroy completed torrent", error);
+      }
       torrentsById.delete(torrentId);
       torrentMetaById.delete(torrentId);
       pausedTorrentMetaById.delete(torrentId);
@@ -285,99 +404,91 @@ function attachTorrentLifecycle(torrentId: string, torrent: any) {
   });
 }
 
-function safeStopTorrent(torrent: any) {
-  if (!torrent) return;
-  try {
-    if (torrent.__limboProgressInterval) {
-      clearInterval(torrent.__limboProgressInterval);
-      torrent.__limboProgressInterval = null;
-    }
-  } catch {}
-  try {
-    if (torrent.__limboNoUploadInterval) {
-      clearInterval(torrent.__limboNoUploadInterval);
-      torrent.__limboNoUploadInterval = null;
-    }
-  } catch {}
-}
-
 async function shutdownWorker(): Promise<void> {
-  // Stop all per-torrent intervals and destroy torrents
   for (const torrent of torrentsById.values()) {
     try {
       safeStopTorrent(torrent);
-    } catch {}
-    try {
-      torrent?.destroy?.({ destroyStore: false });
-    } catch {}
+      torrent.destroy?.({ destroyStore: false });
+    } catch (error) {
+      logIgnoredError("Failed to destroy torrent during shutdown", error);
+    }
   }
   torrentsById.clear();
   torrentMetaById.clear();
   pausedTorrentMetaById.clear();
 
-  // Close stream server
   if (streamServer) {
     const server = streamServer;
     streamServer = null;
     await new Promise<void>((resolve) => {
       try {
         server.close(() => resolve());
-      } catch {
+      } catch (error) {
+        logIgnoredError("Failed to close stream server cleanly", error);
         resolve();
       }
     });
   }
   streamServerPort = 0;
 
-  // Destroy WebTorrent client (closes UDP tracker sockets/DHT)
   if (torrentClient) {
     const client = torrentClient;
     torrentClient = null;
     await new Promise<void>((resolve) => {
       try {
         client.destroy(() => resolve());
-      } catch {
+      } catch (error) {
+        logIgnoredError("Failed to destroy torrent client cleanly", error);
         resolve();
       }
     });
   }
 }
 
-async function handleInit(msg: Extract<WorkerRequest, { type: "init" }>) {
-  enableSeeding = msg.enableSeeding;
-  publicTrackers = msg.publicTrackers || [];
+async function handleInit(message: Extract<WorkerRequest, { type: "init" }>) {
+  enableSeeding = message.enableSeeding;
+  publicTrackers = message.publicTrackers || [];
 
   try {
     await ensureTorrentClient();
     await ensureStreamServer();
     post({ type: "ready", ok: true, streamServerPort });
-  } catch (err) {
-    post({ type: "ready", ok: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (error) {
+    post({
+      type: "ready",
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
-parentPort?.on("message", async (msg: WorkerRequest) => {
+function getRequestId(message: WorkerRequest) {
+  if ("requestId" in message) return message.requestId;
+  return null;
+}
+
+parentPort?.on("message", async (message: WorkerRequest) => {
   try {
-    if (msg.type === "init") {
-      await handleInit(msg);
+    if (message.type === "init") {
+      await handleInit(message);
       return;
     }
 
-    if (msg.type === "shutdown") {
+    if (message.type === "shutdown") {
       await shutdownWorker();
-      respondOk(msg.requestId);
+      respondOk(message.requestId);
       return;
     }
 
     if (!torrentClient) {
-      // If init failed, all operations should fail explicitly.
-      if ((msg as any).requestId) respondErr((msg as any).requestId, "Torrent worker not initialized");
+      const requestId = getRequestId(message);
+      if (requestId) respondErr(requestId, "Torrent worker not initialized");
       return;
     }
 
-    switch (msg.type) {
+    switch (message.type) {
       case "set-seeding": {
-        enableSeeding = msg.enableSeeding;
+        enableSeeding = message.enableSeeding;
         for (const torrent of torrentsById.values()) {
           applyTorrentUploadPolicy(torrent, enableSeeding);
         }
@@ -385,147 +496,158 @@ parentPort?.on("message", async (msg: WorkerRequest) => {
       }
 
       case "add-magnet": {
-        const { requestId, torrentId, magnetUri, downloadPath, announce } = msg;
-        const torrent = torrentClient.add(magnetUri, {
-          path: downloadPath,
-          announce: announce?.length ? announce : publicTrackers,
+        const torrent = torrentClient.add(message.magnetUri, {
+          path: message.downloadPath,
+          announce: message.announce.length > 0 ? message.announce : publicTrackers,
         });
-        torrentsById.set(torrentId, torrent);
-        torrentMetaById.set(torrentId, {
-          magnetUri,
-          downloadPath,
-          announce: announce?.length ? announce : publicTrackers,
+
+        torrentsById.set(message.torrentId, torrent);
+        torrentMetaById.set(message.torrentId, {
+          magnetUri: message.magnetUri,
+          downloadPath: message.downloadPath,
+          announce: message.announce.length > 0 ? message.announce : publicTrackers,
         });
-        pausedTorrentMetaById.delete(torrentId);
+        pausedTorrentMetaById.delete(message.torrentId);
         applyTorrentUploadPolicy(torrent, enableSeeding);
-        attachTorrentLifecycle(torrentId, torrent);
-        respondOk(requestId);
+        attachTorrentLifecycle(message.torrentId, torrent);
+        respondOk(message.requestId);
         return;
       }
 
       case "add-file": {
-        const { requestId, torrentId, filePath, downloadPath, announce } = msg;
-        if (!fs.existsSync(filePath)) throw new Error("Torrent file not found");
-        const torrentBuffer = fs.readFileSync(filePath);
+        if (!fs.existsSync(message.filePath)) {
+          throw new Error("Torrent file not found");
+        }
+
+        const torrentBuffer = fs.readFileSync(message.filePath);
         const torrent = torrentClient.add(torrentBuffer, {
-          path: downloadPath,
-          announce: announce?.length ? announce : publicTrackers,
+          path: message.downloadPath,
+          announce: message.announce.length > 0 ? message.announce : publicTrackers,
         });
-        torrentsById.set(torrentId, torrent);
-        torrentMetaById.set(torrentId, {
+
+        torrentsById.set(message.torrentId, torrent);
+        torrentMetaById.set(message.torrentId, {
           magnetUri: "",
-          downloadPath,
-          announce: announce?.length ? announce : publicTrackers,
+          downloadPath: message.downloadPath,
+          announce: message.announce.length > 0 ? message.announce : publicTrackers,
         });
-        pausedTorrentMetaById.delete(torrentId);
+        pausedTorrentMetaById.delete(message.torrentId);
         applyTorrentUploadPolicy(torrent, enableSeeding);
-        attachTorrentLifecycle(torrentId, torrent);
-        respondOk(requestId);
+        attachTorrentLifecycle(message.torrentId, torrent);
+        respondOk(message.requestId);
         return;
       }
 
       case "pause": {
-        const torrentId = msg.torrentId;
-        const torrent = torrentsById.get(torrentId);
-        const meta = torrentMetaById.get(torrentId);
+        const torrent = torrentsById.get(message.torrentId);
+        const meta = torrentMetaById.get(message.torrentId);
         const magnetUri = torrent?.magnetURI || meta?.magnetUri || "";
+
         if (!magnetUri) {
-          // If we don't have a magnet yet, best effort pause.
           torrent?.pause?.();
-          respondOk(msg.requestId);
+          respondOk(message.requestId);
           return;
         }
 
-        if (meta) {
-          pausedTorrentMetaById.set(torrentId, { ...meta, magnetUri });
-        } else {
-          pausedTorrentMetaById.set(torrentId, {
-            magnetUri,
-            downloadPath: "",
-            announce: publicTrackers,
-          });
+        pausedTorrentMetaById.set(message.torrentId, {
+          magnetUri,
+          downloadPath: meta?.downloadPath || "",
+          announce: meta?.announce || publicTrackers,
+        });
+
+        if (torrent) {
+          safeStopTorrent(torrent);
+          try {
+            torrent.destroy?.({ destroyStore: false });
+          } catch (error) {
+            logIgnoredError("Failed to destroy paused torrent", error);
+          }
         }
 
-        safeStopTorrent(torrent);
-        try {
-          torrent?.destroy?.({ destroyStore: false });
-        } catch {}
-        torrentsById.delete(torrentId);
-        torrentMetaById.delete(torrentId);
-        respondOk(msg.requestId);
+        torrentsById.delete(message.torrentId);
+        torrentMetaById.delete(message.torrentId);
+        respondOk(message.requestId);
         return;
       }
 
       case "resume": {
-        const torrentId = msg.torrentId;
-        const existing = torrentsById.get(torrentId);
+        const existing = torrentsById.get(message.torrentId);
         if (existing) {
           existing.resume?.();
           applyTorrentUploadPolicy(existing, enableSeeding);
-          respondOk(msg.requestId);
+          respondOk(message.requestId);
           return;
         }
 
-        const meta = pausedTorrentMetaById.get(torrentId);
+        const meta = pausedTorrentMetaById.get(message.torrentId);
         if (!meta || !meta.magnetUri) {
           throw new Error("Torrent cannot be resumed yet (missing magnet metadata)");
         }
 
         const torrent = torrentClient.add(meta.magnetUri, {
           path: meta.downloadPath,
-          announce: meta.announce?.length ? meta.announce : publicTrackers,
+          announce: meta.announce.length > 0 ? meta.announce : publicTrackers,
         });
-        torrentsById.set(torrentId, torrent);
-        torrentMetaById.set(torrentId, meta);
+        torrentsById.set(message.torrentId, torrent);
+        torrentMetaById.set(message.torrentId, meta);
+        pausedTorrentMetaById.delete(message.torrentId);
         applyTorrentUploadPolicy(torrent, enableSeeding);
-        attachTorrentLifecycle(torrentId, torrent);
-        pausedTorrentMetaById.delete(torrentId);
-        respondOk(msg.requestId);
+        attachTorrentLifecycle(message.torrentId, torrent);
+        respondOk(message.requestId);
         return;
       }
 
       case "remove": {
-        const torrent = torrentsById.get(msg.torrentId);
+        const torrent = torrentsById.get(message.torrentId);
         if (torrent) {
           safeStopTorrent(torrent);
-          torrent.destroy?.({ destroyStore: msg.deleteFiles });
-          torrentsById.delete(msg.torrentId);
-          torrentMetaById.delete(msg.torrentId);
+          try {
+            torrent.destroy?.({ destroyStore: message.deleteFiles });
+          } catch (error) {
+            logIgnoredError("Failed to destroy removed torrent", error);
+          }
+          torrentsById.delete(message.torrentId);
+          torrentMetaById.delete(message.torrentId);
         }
-        pausedTorrentMetaById.delete(msg.torrentId);
-        respondOk(msg.requestId);
+        pausedTorrentMetaById.delete(message.torrentId);
+        respondOk(message.requestId);
         return;
       }
 
       case "get-files": {
-        const torrent = torrentClient.get(msg.infoHash);
+        const torrent = torrentClient.get(message.infoHash);
         if (!torrent) {
-          respondOk(msg.requestId, []);
+          respondOk(message.requestId, []);
           return;
         }
-        const files = torrent.files.map((file: any, index: number) => ({
-          index,
-          name: file.name,
-          path: file.path,
-          length: file.length,
-          downloaded: file.downloaded,
-          progress: file.progress,
-        }));
-        respondOk(msg.requestId, files);
+
+        respondOk(
+          message.requestId,
+          torrent.files.map((file, index) => ({
+            index,
+            name: file.name,
+            path: file.path,
+            length: file.length,
+            downloaded: file.downloaded,
+            progress: file.progress,
+          }))
+        );
         return;
       }
-
-      default: {
-        const _exhaustive: never = msg;
-        return _exhaustive;
-      }
     }
-  } catch (err) {
-    const requestId = (msg as any).requestId;
-    if (typeof requestId === "string") {
-      respondErr(requestId, err);
+  } catch (error) {
+    const requestId = getRequestId(message);
+    if (requestId) {
+      respondErr(requestId, error);
     } else {
-      post({ type: "event", event: "torrent-error", payload: { id: "unknown", error: err instanceof Error ? err.message : String(err) } });
+      post({
+        type: "event",
+        event: "torrent-error",
+        payload: {
+          id: "unknown",
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
   }
 });

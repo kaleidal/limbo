@@ -84,7 +84,7 @@ function buildFaviconUrl(url: string): string {
   }
 }
 
-function normalizeBookmarkUrl(value: string): string | null {
+function normalizeBookmarkUrl(value: unknown): string | null {
   const raw = String(value || "").trim();
   if (!raw) return null;
   try {
@@ -106,7 +106,7 @@ function sanitizeBookmarks(input: unknown): Bookmark[] {
 
   for (const entry of input) {
     if (!entry || typeof entry !== "object") continue;
-    const obj: any = entry;
+    const obj = entry as Partial<Bookmark> & { url?: unknown; name?: unknown; favicon?: unknown; id?: unknown };
     const normalizedUrl = normalizeBookmarkUrl(obj.url);
     if (!normalizedUrl) continue;
 

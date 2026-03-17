@@ -8,6 +8,13 @@ import type {
 } from "@/types/electron.d";
 
 type ViewType = "library" | "downloads" | "settings" | "browser";
+type BrowserSession = {
+  bookmarkId: string;
+  url: string;
+  updatedAt: number;
+};
+
+const BROWSER_SESSION_TTL_MS = 5 * 60 * 1000;
 
 interface AppState {
   // Current view
@@ -17,6 +24,10 @@ interface AppState {
   // Active bookmark (for browser view)
   activeBookmark: Bookmark | null;
   setActiveBookmark: (bookmark: Bookmark | null) => void;
+  browserSessions: Record<string, BrowserSession>;
+  rememberBrowserSession: (bookmarkId: string, url: string) => void;
+  getBrowserSessionUrl: (bookmarkId: string, fallbackUrl: string) => string;
+  clearExpiredBrowserSessions: () => void;
 
   // Bookmarks
   bookmarks: Bookmark[];
@@ -62,7 +73,7 @@ interface AppState {
   initializeData: () => Promise<void>;
 }
 
-export const useAppStore = create<AppState>((set, _) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   // Current view
   currentView: "library",
   setCurrentView: (view) => set({ currentView: view }),
@@ -71,6 +82,32 @@ export const useAppStore = create<AppState>((set, _) => ({
   activeBookmark: null,
   setActiveBookmark: (bookmark) =>
     set({ activeBookmark: bookmark, currentView: bookmark ? "browser" : "library" }),
+  browserSessions: {},
+  rememberBrowserSession: (bookmarkId, url) =>
+    set((state) => ({
+      browserSessions: {
+        ...state.browserSessions,
+        [bookmarkId]: {
+          bookmarkId,
+          url,
+          updatedAt: Date.now(),
+        },
+      },
+    })),
+  getBrowserSessionUrl: (bookmarkId, fallbackUrl): string => {
+    const session = get().browserSessions[bookmarkId];
+    if (!session) return fallbackUrl;
+    if (Date.now() - session.updatedAt > BROWSER_SESSION_TTL_MS) return fallbackUrl;
+    return session.url || fallbackUrl;
+  },
+  clearExpiredBrowserSessions: () =>
+    set((state) => ({
+      browserSessions: Object.fromEntries(
+        Object.entries(state.browserSessions).filter(
+          ([, session]) => Date.now() - session.updatedAt <= BROWSER_SESSION_TTL_MS
+        )
+      ),
+    })),
 
   // Bookmarks
   bookmarks: [],
@@ -99,9 +136,13 @@ export const useAppStore = create<AppState>((set, _) => ({
     })),
   addDownload: (download) =>
     set((state) => {
-      // Prevent duplicates
-      if (state.downloads.some((d) => d.id === download.id)) {
-        return state;
+      const existingIndex = state.downloads.findIndex((d) => d.id === download.id);
+      if (existingIndex !== -1) {
+        return {
+          downloads: state.downloads.map((item) =>
+            item.id === download.id ? { ...item, ...download } : item
+          ),
+        };
       }
       return { downloads: [...state.downloads, download] };
     }),

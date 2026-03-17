@@ -29,6 +29,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { TorrentInfo, Download as DownloadType } from "@/types/electron.d";
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function DownloadsView() {
   const { downloads, torrents, setTorrents, updateTorrent, updateDownload } = useAppStore();
   const [activeTab, setActiveTab] = useState<"downloads" | "torrents">("downloads");
@@ -120,11 +124,11 @@ export function DownloadsView() {
           await window.limbo.addTorrent(urlToUse);
           setActiveTab("torrents");
           if (!input) setUrlInput("");
-        } catch (err: any) {
-          if (err?.message?.includes("VPN_REQUIRED")) {
+        } catch (error: unknown) {
+          if (getErrorMessage(error).includes("VPN_REQUIRED")) {
             setVpnWarning(true);
           } else {
-            console.error("Failed to add torrent:", err);
+            console.error("Failed to add torrent:", error);
           }
         }
       } else {
@@ -140,11 +144,12 @@ export function DownloadsView() {
     setIsAdding(true);
     setIsBatchOpen(false);
     try {
-      for (const url of urls) {
-        if (url.trim()) {
-          window.limbo.startDownload(url.trim());
-        }
-      }
+      await Promise.all(
+        urls
+          .map((url) => url.trim())
+          .filter(Boolean)
+          .map((url) => window.limbo.startDownload(url))
+      );
     } finally {
       setIsAdding(false);
     }
@@ -666,7 +671,7 @@ const DownloadGroup = memo(function DownloadGroup({
 
       {expanded && (
         <div className="border-t border-neutral-800/50 bg-black/20 p-2 space-y-2">
-          {items.sort((a, b) => a.filename.localeCompare(b.filename)).map(item => (
+          {items.slice().sort((a, b) => a.filename.localeCompare(b.filename)).map(item => (
             <DownloadItem
               key={item.id}
               download={item}
@@ -697,7 +702,7 @@ const DownloadItem = memo(function DownloadItem({
   getProgress,
   getStatusIcon,
 }: {
-  download: any;
+  download: DownloadType;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onCancel: (id: string) => void;
@@ -752,7 +757,7 @@ const DownloadItem = memo(function DownloadItem({
               <FolderOpen className="w-4 h-4" />
             </button>
           )}
-          {(download.status === "downloading" || download.status === "paused") && (
+          {(download.status === "downloading" || download.status === "paused" || download.status === "pending") && (
             <button
               onClick={() => onCancel(download.id)}
               className="p-1.5 hover:bg-red-500/20 text-red-500 rounded transition-colors"

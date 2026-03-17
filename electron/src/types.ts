@@ -48,6 +48,8 @@ export interface TorrentInfo {
   id: string;
   name: string;
   magnetUri: string;
+  sourceType?: "magnet" | "file";
+  sourceValue?: string;
   size: number;
   downloaded: number;
   uploaded: number;
@@ -59,6 +61,7 @@ export interface TorrentInfo {
   status: "downloading" | "seeding" | "paused" | "completed" | "error";
   path: string;
   infoHash?: string;
+  lastError?: string;
 }
 
 export interface DebridConfig {

@@ -8,6 +8,14 @@ import { store } from "../store.js";
 import { isExtractableArchive, parseMultiPartArchive, areAllPartsCompleted } from "../utils.js";
 import type { Download } from "../types.js";
 
+type ExtractionWorkerMessage = {
+  archivePath: string;
+  status: "extracting" | "progress" | "done" | "error";
+  percent?: number;
+  message?: string;
+  error?: string;
+};
+
 // Cache for running worker
 let extractWorker: Worker | null = null;
 
@@ -34,7 +42,9 @@ export async function shutdownExtractWorker(): Promise<void> {
   if (!worker) return;
   try {
     await worker.terminate();
-  } catch { }
+  } catch (error) {
+    console.warn("[Extract] Failed to terminate extract worker", error);
+  }
 }
 
 export function handleMultiPartExtraction(
@@ -75,7 +85,7 @@ export function handleMultiPartExtraction(
     });
 
     const worker = getExtractWorker();
-    const messageHandler = (msg: any) => {
+    const messageHandler = (msg: ExtractionWorkerMessage) => {
       if (msg.archivePath !== firstPartPath) return;
       getMainWindow()?.webContents.send("extraction-progress", {
         downloadId: download.id,
@@ -153,7 +163,7 @@ export function handleSingleExtraction(
   });
 
   const worker = getExtractWorker();
-  const messageHandler = (msg: any) => {
+  const messageHandler = (msg: ExtractionWorkerMessage) => {
     if (msg.archivePath !== download.path) return;
     getMainWindow()?.webContents.send("extraction-progress", {
       downloadId: download.id,
