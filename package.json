@@ -42,6 +42,7 @@
       "icon": "public/icon.png"
     },
     "mac": {
+      "identity": "-",
       "target": [
         "dmg"
       ],

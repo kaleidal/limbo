@@ -1,74 +1,102 @@
-﻿# Limbo
+# Limbo
 
-Limbo is a Windows/macOS/Linux desktop app built with Electron + React and is a software manager with integrated browser, download manager, and torrent client.
+Limbo is a desktop software manager built with Electron, React, and TypeScript. It combines a browser, direct download manager, torrent client, Debrid integration, extraction pipeline, and library view into one app.
+
+![Limbo preview](./preview.png)
+
+## What It Does
+
+- Direct HTTP/HTTPS downloads with queue management
+- Torrent downloads from magnet links and `.torrent` files
+- Real-Debrid, AllDebrid, and Premiumize support for supported flows
+- Embedded browser with bookmarks, popup blocking, and short-lived session memory
+- Automatic archive extraction after download
+- Local library for downloaded software, media, archives, and other files
+- Magnet and `.torrent` file association support in packaged builds
+
+## Tech Stack
+
+- Electron
+- Vite
+- React 19
+- TypeScript
+- Tailwind CSS
+- Base UI / shadcn-style components
+- WebTorrent
+- electron-store
 
 ## Legal Notice
 
-Limbo is a general-purpose download management tool. It supports:
-- Direct HTTP/HTTPS downloads
-- BitTorrent protocol (for legal torrents like Linux distributions, open source software, public domain media)
-- Organization of downloaded files in a library view
+Limbo is a general-purpose download and organization tool. It supports direct downloads, BitTorrent, Debrid services, and local file management.
 
-**Users are solely responsible for ensuring they have legal rights to download and possess any content accessed through this application.** This tool does not host, link to, or endorse any infringing content.
-
-## Tech
-
-- Electron (main + preload)
-- Vite + React + TypeScript
-- Tailwind + shadcn/ui
+Users are solely responsible for ensuring they have the legal right to access, download, and possess any content used with this application. Limbo does not host or provide infringing content.
 
 ## Development
 
-Prereqs:
+### Prerequisites
 
 - Node.js
-- Bun (optional, but supported)
+- npm
 
-Install dependencies:
+### Install
 
-    bun install
+```bash
+npm install
+```
 
-Run the app (Vite + Electron):
+### Run In Development
 
-    bun run dev:electron
+```bash
+npm run dev:electron
+```
+
+This starts the Vite renderer and launches Electron against the local dev server.
 
 ## Build
 
-Build renderer + Electron bundles:
+### Build Renderer + Electron Bundles
 
-    bun run build
+```bash
+npm run build
+```
 
-Create an installer/package (electron-builder):
+### Build Installers
 
-    bun run build:electron
+```bash
+npm run build:electron
+```
 
-## Auto-updates (electron-updater)
+Packaged builds are created with `electron-builder`.
 
-Auto-updates are enabled via electron-updater and use the electron-builder publish configuration in package.json.
+## Auto Updates
+
+Auto updates are handled with `electron-updater` and the `build.publish` configuration in `package.json`.
 
 Notes:
 
-- Auto-update runs only in packaged builds (app.isPackaged === true).
-- In development it is disabled.
-- Updates are typically distributed via GitHub Releases (the build.publish configuration points to the repo).
+- Auto update checks only run in packaged builds
+- Development mode does not perform update checks
+- Release distribution is configured for GitHub Releases
 
 ## Associations
 
-- magnet: URLs: the app registers as a protocol handler for magnet links.
-- .torrent files: file association is configured via electron-builder.
+Packaged builds register support for:
+
+- `magnet:` links
+- `.torrent` files
 
 ## Troubleshooting
 
-### Torrent support: node-datachannel native module
+### Torrent Support
 
-If torrent support fails to load due to node-datachannel, rebuilding it is often enough:
+If torrent support fails because of a native dependency issue, try:
 
-    npm rebuild node-datachannel
+```bash
+npx electron-rebuild
+```
 
-If it still fails:
-
-    npx electron-rebuild
+If you are working with a specific native module manually, rebuilding that module may also help.
 
 ## License
 
-This project is licensed under the MIT license.
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).
