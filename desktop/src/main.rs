@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use fenestra_cef::{
     FenestraLifecyclePolicy, FenestraWindow, RuntimeConfig, RuntimeMode, run_fenestra_host_from_args,
@@ -11,6 +13,9 @@ use limbo_desktop::os::clipboard::ClipboardWatcher;
 use limbo_desktop::state::AppState;
 use limbo_desktop::store::Store;
 use tracing_subscriber::EnvFilter;
+
+const DEV_URL: &str = "http://127.0.0.1:5177";
+const DEV_PORT: u16 = 5177;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -84,22 +89,27 @@ fn main() {
         .lifecycle_policy(FenestraLifecyclePolicy::browser_tab())
         .runtime(fenestra_runtime);
 
+    let mut vite: Option<Child> = None;
     if dev_mode {
-        window = window
-            .dev_url("http://127.0.0.1:5177")
-            .dev_command("bun run dev");
+        vite = ensure_vite(&repo_root);
+        window = window.dev_url(DEV_URL);
     } else if dist_entry.exists() {
         window = window.entry(dist_entry.to_string_lossy());
     } else {
-        window = window
-            .dev_url("http://127.0.0.1:5177")
-            .dev_command("bun run dev");
+        vite = ensure_vite(&repo_root);
+        window = window.dev_url(DEV_URL);
     }
 
     window = ipc::attach(window, app.clone());
 
     tracing::info!("starting Limbo on Fenestra (dev={dev_mode})");
-    match window.launch_or_install() {
+    let result = window.launch_or_install();
+    if let Some(mut child) = vite.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    match result {
         Ok(process) => {
             tracing::info!("Limbo window closed (pid {})", process.id());
             let _ = process.wait();
@@ -109,6 +119,47 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn ensure_vite(repo_root: &Path) -> Option<Child> {
+    if port_open(DEV_PORT) {
+        tracing::info!("vite already listening on {DEV_PORT}");
+        return None;
+    }
+
+    tracing::info!("starting vite in {}", repo_root.display());
+    let child = Command::new("bun")
+        .args(["run", "dev"])
+        .current_dir(repo_root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| {
+            eprintln!("failed to start vite (`bun run dev`): {error}");
+            error
+        })
+        .ok()?;
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if port_open(DEV_PORT) {
+            tracing::info!("vite ready on {DEV_PORT}");
+            return Some(child);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    eprintln!("vite did not become ready on port {DEV_PORT} within 30s");
+    Some(child)
+}
+
+fn port_open(port: u16) -> bool {
+    TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(150),
+    )
+    .is_ok()
 }
 
 fn data_dir() -> PathBuf {
