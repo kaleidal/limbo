@@ -347,6 +347,100 @@ export function SettingsView() {
                 }
               />
             </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Companion API</p>
+                <p className="text-sm text-neutral-500">
+                  Let apps like Raffi request torrents and stream over localhost.
+                </p>
+              </div>
+              <Switch
+                checked={localSettings.apiEnabled !== false}
+                onCheckedChange={(checked: boolean) =>
+                  setLocalSettings({
+                    ...localSettings,
+                    apiEnabled: checked,
+                  })
+                }
+              />
+            </div>
+            {localSettings.apiEnabled !== false && (
+              <>
+                <div>
+                  <Label htmlFor="apiPort">API Port</Label>
+                  <Input
+                    id="apiPort"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={localSettings.apiPort ?? 17890}
+                    onChange={(e) =>
+                      setLocalSettings({
+                        ...localSettings,
+                        apiPort: parseInt(e.target.value) || 17890,
+                      })
+                    }
+                    className="bg-neutral-800 border-neutral-700 mt-1 w-32"
+                  />
+                  <p className="text-xs text-neutral-500 mt-1">
+                    Default http://127.0.0.1:17890/v1. Auth token is written to Limbo&apos;s api.json.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">Ask before adding torrents</p>
+                    <p className="text-sm text-neutral-500">
+                      Show a system prompt when apps request torrents.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={localSettings.apiPromptPolicy !== "off"}
+                    onCheckedChange={(checked: boolean) =>
+                      setLocalSettings({
+                        ...localSettings,
+                        apiPromptPolicy: checked ? "always" : "off",
+                      })
+                    }
+                  />
+                </div>
+                {(localSettings.trustedApiClients?.length ?? 0) > 0 && (
+                  <div>
+                    <p className="font-medium mb-2">Trusted apps</p>
+                    <div className="space-y-2">
+                      {localSettings.trustedApiClients?.map((clientId) => (
+                        <div
+                          key={clientId}
+                          className="flex items-center justify-between gap-3 text-sm text-neutral-300"
+                        >
+                          <span className="font-mono text-xs break-all">
+                            {clientId.startsWith("exe:")
+                              ? clientId.slice(4)
+                              : clientId}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setLocalSettings({
+                                ...localSettings,
+                                trustedApiClients: (localSettings.trustedApiClients || []).filter(
+                                  (id) => id !== clientId
+                                ),
+                              })
+                            }
+                          >
+                            Revoke
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-neutral-500 mt-2">
+                      Trust is tied to the verified executable path, not a self-reported app name.
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </section>
 
@@ -359,8 +453,8 @@ export function SettingsView() {
           <div className="space-y-4 bg-neutral-900 rounded-lg p-4 border border-neutral-800">
             <div>
               <Label>Service Provider</Label>
-              <div className="flex gap-2 mt-1">
-                {(["realdebrid", "alldebrid", "premiumize"] as const).map(
+              <div className="flex flex-wrap gap-2 mt-1">
+                {(["realdebrid", "alldebrid", "premiumize", "torbox"] as const).map(
                   (service) => (
                     <Button
                       key={service}
@@ -380,6 +474,7 @@ export function SettingsView() {
                       {service === "realdebrid" && "Real-Debrid"}
                       {service === "alldebrid" && "AllDebrid"}
                       {service === "premiumize" && "Premiumize"}
+                      {service === "torbox" && "TorBox"}
                     </Button>
                   )
                 )}
@@ -430,6 +525,8 @@ export function SettingsView() {
                     "Get your API key from alldebrid.com/apikeys"}
                   {localSettings.debrid.service === "premiumize" &&
                     "Get your API key from premiumize.me/account"}
+                  {localSettings.debrid.service === "torbox" &&
+                    "Get your API key from torbox.app/settings"}
                 </p>
               </div>
             )}

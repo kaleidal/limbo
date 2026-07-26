@@ -18,6 +18,7 @@ import {
   syncLibraryWithFilesystem,
   shutdownExtractWorker,
 } from "./src/downloads/index.js";
+import { startApiServer, stopApiServer } from "./src/api/server.js";
 
 const { autoUpdater } = electronUpdater;
 
@@ -179,7 +180,7 @@ function createWindow() {
   });
 
   if (process.env.NODE_ENV === "development") {
-    mainWindow.loadURL("http://localhost:5173");
+    mainWindow.loadURL("http://localhost:5177");
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
@@ -244,12 +245,13 @@ async function shutdownBackgroundWork() {
     librarySyncInterval = null;
   }
 
-  await Promise.allSettled([shutdownTorrentWorker(), shutdownExtractWorker()]);
+  await Promise.allSettled([shutdownTorrentWorker(), shutdownExtractWorker(), stopApiServer()]);
 }
 
 app.whenReady().then(async () => {
   const torrentWorkerPath = path.join(__dirname, "torrent-worker.js");
   await initTorrentWorker(torrentWorkerPath);
+  await startApiServer();
 
   createWindow();
   initAutoUpdater();

@@ -51,6 +51,7 @@ export function App() {
     updateDownload,
     addTorrent,
     updateTorrent,
+    removeTorrent,
     setCurrentView,
     setActiveBookmark,
     settings,
@@ -163,6 +164,10 @@ export function App() {
         updateTorrent(data.id, { status: "error" });
       });
 
+      const unsubTorrentRemoved = window.limbo.onTorrentRemoved((data) => {
+        removeTorrent(data.id);
+      });
+
       const unsubTorrentFile = window.limbo.onTorrentFileOpened(async (filePath: string) => {
         try {
           setCurrentView("downloads");
@@ -237,12 +242,13 @@ export function App() {
         unsubTorrentProgress();
         unsubTorrentComplete();
         unsubTorrentError();
+        unsubTorrentRemoved();
         unsubTorrentFile();
         unsubExtraction();
         unsubBrowserDownload();
       };
     }
-  }, [addDownload, addTorrent, initializeData, setActiveBookmark, setCurrentView, setLibrary, updateDownload, updateTorrent]);
+  }, [addDownload, addTorrent, initializeData, removeTorrent, setActiveBookmark, setCurrentView, setLibrary, updateDownload, updateTorrent]);
 
   const renderView = () => {
     switch (currentView) {

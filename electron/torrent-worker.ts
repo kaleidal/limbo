@@ -3,8 +3,54 @@ import fs from "fs";
 import http from "http";
 import path from "path";
 
+/**
+ * WebTorrent HTTP trackers use `fetch`. That fails inside `worker_threads`
+ * (fetch aborted / "fetch failed" → 0 peers when UDP/DHT is blocked).
+ * Prefer Electron utilityProcess; keep worker_threads as a fallback host only.
+ */
+type HostPort = {
+  postMessage: (message: unknown) => void;
+  onMessage: (listener: (message: unknown) => void) => void;
+};
+
+function createHostPort(): HostPort {
+  const electronParent = (
+    process as NodeJS.Process & {
+      parentPort?: {
+        postMessage: (message: unknown) => void;
+        on: (event: "message", listener: (event: { data: unknown }) => void) => void;
+      };
+    }
+  ).parentPort;
+
+  if (electronParent) {
+    return {
+      postMessage: (message) => electronParent.postMessage(message),
+      onMessage: (listener) => {
+        electronParent.on("message", (event) => {
+          listener(event?.data ?? event);
+        });
+      },
+    };
+  }
+
+  if (parentPort) {
+    const threadPort = parentPort;
+    return {
+      postMessage: (message) => threadPort.postMessage(message),
+      onMessage: (listener) => {
+        threadPort.on("message", listener);
+      },
+    };
+  }
+
+  throw new Error("torrent-worker must run as an Electron utility process");
+}
+
+const hostPort = createHostPort();
+
 type WorkerRequest =
-  | { type: "init"; enableSeeding: boolean; publicTrackers: string[] }
+  | { type: "init"; enableSeeding: boolean; publicTrackers: string[]; streamToken?: string }
   | { type: "shutdown"; requestId: string }
   | {
       type: "add-magnet";
@@ -13,6 +59,9 @@ type WorkerRequest =
       magnetUri: string;
       downloadPath: string;
       announce: string[];
+      keepAlive?: boolean;
+      selectedFileIndex?: number | null;
+      sequential?: boolean;
     }
   | {
       type: "add-file";
@@ -21,12 +70,23 @@ type WorkerRequest =
       filePath: string;
       downloadPath: string;
       announce: string[];
+      keepAlive?: boolean;
+      selectedFileIndex?: number | null;
+      sequential?: boolean;
     }
   | { type: "pause"; requestId: string; torrentId: string }
   | { type: "resume"; requestId: string; torrentId: string }
   | { type: "remove"; requestId: string; torrentId: string; deleteFiles: boolean }
   | { type: "set-seeding"; enableSeeding: boolean }
-  | { type: "get-files"; requestId: string; infoHash: string };
+  | { type: "get-files"; requestId: string; infoHash: string }
+  | {
+      type: "select-file";
+      requestId: string;
+      torrentId: string;
+      fileIndex: number;
+      sequential?: boolean;
+    }
+  | { type: "get-status"; requestId: string; torrentId: string };
 
 type WorkerResponse =
   | { type: "response"; requestId: string; ok: true; data?: unknown }
@@ -50,6 +110,7 @@ type TorrentProgressEvent = {
   peers: number;
   seeds: number;
   done: boolean;
+  size?: number;
 };
 
 type TorrentErrorEvent = {
@@ -82,6 +143,8 @@ type TorrentFile = {
   length: number;
   downloaded: number;
   progress: number;
+  select?: (priority?: number) => void;
+  deselect?: () => void;
   createReadStream: (options?: { start?: number; end?: number }) => NodeJS.ReadableStream;
 };
 
@@ -107,6 +170,10 @@ type TorrentLike = {
   __limboNoUploadApplied?: boolean;
   __limboNoUploadInterval?: NodeJS.Timeout | null;
   __limboProgressInterval?: NodeJS.Timeout | null;
+  __limboKeepAlive?: boolean;
+  __limboSelectedFileIndex?: number | null;
+  __limboSequential?: boolean;
+  __limboDownloadPath?: string;
 };
 
 type WebTorrentClient = {
@@ -114,9 +181,52 @@ type WebTorrentClient = {
     source: string | Buffer,
     options: { path: string; announce: string[] }
   ) => TorrentLike;
-  get: (infoHash: string) => TorrentLike | undefined;
+  get: (infoHash: string) => Promise<TorrentLike | null | undefined>;
   destroy: (callback: () => void) => void;
+  torrents?: TorrentLike[];
 };
+
+type WebTorrentCtor = new (opts?: {
+  dht?: boolean | { bootstrap?: string[] };
+  tracker?: boolean | { announce?: string[] };
+  utp?: boolean;
+  lsd?: boolean;
+}) => WebTorrentClient;
+
+function resolveAnnounceList(announce?: string[]): string[] {
+  return announce && announce.length > 0 ? announce : publicTrackers;
+}
+
+/** Raffi magnets are often hash-only or UDP-tracker-only — put working announce URLs first. */
+function withAnnounceTrackers(magnetUri: string, announce: string[]): string {
+  if (!magnetUri.startsWith("magnet:")) return magnetUri;
+
+  const magnetTrackers = [...magnetUri.matchAll(/[?&]tr=([^&]*)/gi)].map((match) => {
+    try {
+      return decodeURIComponent(match[1] || "");
+    } catch {
+      return match[1] || "";
+    }
+  });
+
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const tracker of [...announce, ...magnetTrackers]) {
+    if (!tracker || seen.has(tracker)) continue;
+    seen.add(tracker);
+    merged.push(tracker);
+  }
+
+  const withoutTrackers = magnetUri
+    .replace(/([?&])tr=[^&]*/gi, "$1")
+    .replace(/[?&]+$/g, "")
+    .replace(/\?&/g, "?")
+    .replace(/&&+/g, "&");
+
+  const base = withoutTrackers.includes("?") ? withoutTrackers : `${withoutTrackers}?`;
+  const joiner = base.endsWith("?") || base.endsWith("&") ? "" : "&";
+  return `${base}${joiner}${merged.map((tracker) => `tr=${encodeURIComponent(tracker)}`).join("&")}`;
+}
 
 function logIgnoredError(context: string, error: unknown) {
   console.warn(`[torrent-worker] ${context}`, error);
@@ -127,13 +237,16 @@ let streamServer: http.Server | null = null;
 let streamServerPort = 0;
 let enableSeeding = false;
 let publicTrackers: string[] = [];
+let streamToken = "";
 
 const torrentsById = new Map<string, TorrentLike>();
 const torrentMetaById = new Map<string, TorrentSourceMeta>();
 const pausedTorrentMetaById = new Map<string, TorrentSourceMeta>();
+const READY_BYTES = 2 * 1024 * 1024;
+const READY_PROGRESS = 0.01;
 
 function post(message: WorkerResponse | WorkerEvent) {
-  parentPort?.postMessage(message);
+  hostPort.postMessage(message);
 }
 
 function respondOk(requestId: string, data?: unknown) {
@@ -236,69 +349,284 @@ function applyTorrentUploadPolicy(torrent: TorrentLike, allowSeeding: boolean) {
   }, 1500);
 }
 
+/** Wait for metadata before choking — choking during handshake can stall peer discovery. */
+function scheduleUploadPolicy(torrent: TorrentLike, allowSeeding: boolean) {
+  if (allowSeeding) {
+    applyTorrentUploadPolicy(torrent, true);
+    return;
+  }
+  if (torrent.files?.length) {
+    applyTorrentUploadPolicy(torrent, false);
+    return;
+  }
+  const apply = () => applyTorrentUploadPolicy(torrent, false);
+  try {
+    torrent.once("ready", apply);
+    torrent.once("metadata", apply);
+  } catch (error) {
+    logIgnoredError("Failed to defer upload policy", error);
+    apply();
+  }
+}
+
 async function ensureTorrentClient() {
   if (torrentClient) return;
   const webTorrentModule = await import("webtorrent");
-  const WebTorrentCtor = webTorrentModule.default as unknown as new () => WebTorrentClient;
-  torrentClient = new WebTorrentCtor();
+  const WebTorrentCtor = webTorrentModule.default as unknown as WebTorrentCtor;
+  torrentClient = new WebTorrentCtor({
+    // Keep DHT on; bootstrap helps when the routing table is empty ("No nodes to query").
+    dht: {
+      bootstrap: [
+        "router.bittorrent.com:6881",
+        "router.utorrent.com:6881",
+        "dht.transmissionbt.com:6881",
+        "dht.aelitis.com:6881",
+      ],
+    },
+    tracker: {
+      announce: publicTrackers,
+    },
+    lsd: true,
+    utp: true,
+  });
+}
+
+function applyFileSelection(torrent: TorrentLike, fileIndex: number | null | undefined, sequential: boolean) {
+  if (!torrent.files?.length) return;
+  const index =
+    typeof fileIndex === "number" && fileIndex >= 0 && fileIndex < torrent.files.length
+      ? fileIndex
+      : torrent.files.findIndex((entry) => entry.name.match(/\.(mp4|mkv|avi|mov|webm|m4v)$/i));
+  const selected = index >= 0 ? index : 0;
+
+  torrent.__limboSelectedFileIndex = selected;
+  torrent.__limboSequential = sequential;
+
+  torrent.files.forEach((file, i) => {
+    try {
+      if (i === selected) {
+        file.select?.(sequential ? 1 : 0);
+      } else {
+        file.deselect?.();
+      }
+    } catch (error) {
+      logIgnoredError("Failed to update file selection", error);
+    }
+  });
+}
+
+function resolveTorrentFile(torrent: TorrentLike, fileKey: string | null): TorrentFile | undefined {
+  if (!torrent.files?.length) return undefined;
+
+  if (fileKey != null && /^\d+$/.test(fileKey)) {
+    const index = Number.parseInt(fileKey, 10);
+    return torrent.files[index];
+  }
+
+  if (fileKey) {
+    const byName = torrent.files.find((entry) => entry.name === fileKey);
+    if (byName) return byName;
+  }
+
+  if (typeof torrent.__limboSelectedFileIndex === "number") {
+    return torrent.files[torrent.__limboSelectedFileIndex] || torrent.files[0];
+  }
+
+  return (
+    torrent.files.find((entry) => entry.name.match(/\.(mp4|mkv|avi|mov|webm|m4v)$/i)) ||
+    torrent.files[0]
+  );
+}
+
+function isStreamAuthorized(req: http.IncomingMessage): boolean {
+  if (!streamToken) return true;
+  try {
+    const host = req.headers.host || "127.0.0.1";
+    const url = new URL(req.url || "/", `http://${host}`);
+    const queryToken = url.searchParams.get("token");
+    if (queryToken && queryToken === streamToken) return true;
+    const header = req.headers.authorization;
+    if (typeof header === "string") {
+      const match = header.match(/^Bearer\s+(.+)$/i);
+      if (match?.[1] === streamToken) return true;
+    }
+  } catch (error) {
+    logIgnoredError("Failed to parse stream auth", error);
+  }
+  return false;
+}
+
+function findTorrentByInfoHash(infoHash: string): TorrentLike | undefined {
+  const normalized = infoHash.toLowerCase();
+  for (const torrent of torrentsById.values()) {
+    if (torrent.infoHash?.toLowerCase() === normalized) return torrent;
+  }
+  if (torrentClient?.torrents) {
+    for (const torrent of torrentClient.torrents) {
+      if (torrent.infoHash?.toLowerCase() === normalized) return torrent;
+    }
+  }
+  return undefined;
+}
+
+async function resolveTorrentByInfoHash(infoHash: string): Promise<TorrentLike | undefined> {
+  const local = findTorrentByInfoHash(infoHash);
+  if (local) return local;
+  if (!torrentClient) return undefined;
+  try {
+    const torrent = await torrentClient.get(infoHash);
+    return torrent || undefined;
+  } catch (error) {
+    logIgnoredError("Failed to look up torrent by info hash", error);
+    return undefined;
+  }
+}
+
+function buildStatus(torrentId: string, torrent: TorrentLike) {
+  const selectedFileIndex =
+    typeof torrent.__limboSelectedFileIndex === "number"
+      ? torrent.__limboSelectedFileIndex
+      : null;
+  const files = torrent.files.map((file, index) => ({
+    index,
+    name: file.name,
+    path: file.path,
+    length: file.length,
+    downloaded: file.downloaded,
+    progress: file.progress,
+  }));
+  const selected =
+    selectedFileIndex != null
+      ? files[selectedFileIndex]
+      : files.find((file) => file.name.match(/\.(mp4|mkv|avi|mov|webm|m4v)$/i)) || files[0];
+  const done = Boolean(torrent.done) || Boolean(selected && selected.progress >= 1);
+  const ready =
+    done ||
+    Boolean(
+      selected &&
+        (selected.downloaded >= Math.min(READY_BYTES, selected.length) ||
+          selected.progress >= READY_PROGRESS)
+    );
+
+  let filePath: string | null = null;
+  if (selected && torrent.__limboDownloadPath) {
+    filePath = path.join(torrent.__limboDownloadPath, selected.path || selected.name);
+  }
+
+  const size = selected?.length ?? torrent.length ?? 0;
+  const downloaded = selected?.downloaded ?? torrent.downloaded ?? 0;
+  const progress =
+    selected != null
+      ? selected.progress
+      : torrent.progress || 0;
+
+  return {
+    id: torrentId,
+    infoHash: torrent.infoHash,
+    name: torrent.name,
+    size,
+    downloaded,
+    progress,
+    downloadSpeed: torrent.downloadSpeed || 0,
+    uploadSpeed: enableSeeding ? torrent.uploadSpeed || 0 : 0,
+    peers: torrent.numPeers || 0,
+    seeds: torrent.numPeers || 0,
+    done,
+    selectedFileIndex:
+      selectedFileIndex != null
+        ? selectedFileIndex
+        : selected
+          ? selected.index
+          : null,
+    files,
+    contiguousBytes: selected?.downloaded || 0,
+    ready,
+    filePath,
+  };
 }
 
 async function ensureStreamServer() {
   if (streamServer) return;
 
   streamServer = http.createServer((req, res) => {
-    const match = req.url?.match(/^\/stream\/([0-9a-f]{40})(?:\/(.*))?$/);
-    if (!match) {
-      res.statusCode = 404;
-      res.end("Not found");
-      return;
-    }
+    void (async () => {
+      if (!isStreamAuthorized(req)) {
+        res.statusCode = 401;
+        res.end("Unauthorized");
+        return;
+      }
 
-    const infoHash = match[1];
-    const fileName = match[2] ? decodeURIComponent(match[2]) : null;
-    const torrent = torrentClient?.get(infoHash);
-    if (!torrent) {
-      res.statusCode = 404;
-      res.end("Torrent not found");
-      return;
-    }
+      let pathname = req.url || "/";
+      try {
+        pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
+      } catch {
+        // keep raw path
+      }
 
-    let file = fileName
-      ? torrent.files.find((entry) => entry.name === fileName)
-      : torrent.files.find((entry) => entry.name.match(/\.(mp4|mkv|avi|mov|webm)$/i));
+      const match = pathname.match(/^\/stream\/([0-9a-f]{40})(?:\/([^/?#]+))?$/i);
+      if (!match) {
+        res.statusCode = 404;
+        res.end("Not found");
+        return;
+      }
 
-    if (!file) file = torrent.files[0];
-    if (!file) {
-      res.statusCode = 404;
-      res.end("No file found");
-      return;
-    }
+      const infoHash = match[1].toLowerCase();
+      const fileKey = match[2] ? decodeURIComponent(match[2]) : null;
+      const torrent = await resolveTorrentByInfoHash(infoHash);
+      if (!torrent) {
+        res.statusCode = 404;
+        res.end("Torrent not found");
+        return;
+      }
 
-    const range = req.headers.range;
-    const fileSize = file.length;
+      const file = resolveTorrentFile(torrent, fileKey);
+      if (!file) {
+        res.statusCode = 404;
+        res.end("No file found");
+        return;
+      }
 
-    if (range) {
-      const parts = range.replace(/bytes=/, "").split("-");
-      const start = Number.parseInt(parts[0], 10);
-      const end = parts[1] ? Number.parseInt(parts[1], 10) : fileSize - 1;
-      const chunkSize = end - start + 1;
+      const range = req.headers.range;
+      const fileSize = file.length;
 
-      res.writeHead(206, {
-        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
-        "Accept-Ranges": "bytes",
-        "Content-Length": chunkSize,
+      if (range) {
+        const parts = range.replace(/bytes=/, "").split("-");
+        const start = Number.parseInt(parts[0], 10);
+        const end = parts[1] ? Number.parseInt(parts[1], 10) : fileSize - 1;
+        const chunkSize = end - start + 1;
+
+        res.writeHead(206, {
+          "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": chunkSize,
+          "Content-Type": getMimeType(file.name),
+          "Access-Control-Allow-Origin": "*",
+        });
+
+        file.createReadStream({ start, end }).pipe(res);
+        return;
+      }
+
+      res.writeHead(200, {
+        "Content-Length": fileSize,
         "Content-Type": getMimeType(file.name),
+        "Accept-Ranges": "bytes",
+        "Access-Control-Allow-Origin": "*",
       });
-
-      file.createReadStream({ start, end }).pipe(res);
-      return;
-    }
-
-    res.writeHead(200, {
-      "Content-Length": fileSize,
-      "Content-Type": getMimeType(file.name),
+      file.createReadStream().pipe(res);
+    })().catch((error) => {
+      logIgnoredError("Stream request failed", error);
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.end("Stream error");
+      } else {
+        try {
+          res.destroy();
+        } catch {
+          // ignore
+        }
+      }
     });
-    file.createReadStream().pipe(res);
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -327,11 +655,11 @@ function safeStopTorrent(torrent: TorrentLike) {
 function attachTorrentLifecycle(torrentId: string, torrent: TorrentLike) {
   torrent.on("warning", (...args: unknown[]) => {
     const [warning] = args;
-    post({
-      type: "event",
-      event: "torrent-error",
-      payload: { id: torrentId, error: warning instanceof Error ? warning.message : String(warning) },
-    });
+    // Tracker DNS blips (EAI_AGAIN) and similar are non-fatal — WebTorrent keeps going.
+    console.warn(
+      `[torrent-worker] warning ${torrentId}:`,
+      warning instanceof Error ? warning.message : String(warning),
+    );
   });
 
   torrent.on("error", (...args: unknown[]) => {
@@ -344,7 +672,7 @@ function attachTorrentLifecycle(torrentId: string, torrent: TorrentLike) {
   });
 
   const sendMetadata = () => {
-    const name = torrent.name || "Loading torrent...";
+    const name = torrent.name || "Untitled torrent";
     const meta = torrentMetaById.get(torrentId);
     if (meta) {
       torrentMetaById.set(torrentId, {
@@ -353,13 +681,25 @@ function attachTorrentLifecycle(torrentId: string, torrent: TorrentLike) {
       });
     }
 
+    if (
+      typeof torrent.__limboSelectedFileIndex === "number" ||
+      torrent.__limboSequential
+    ) {
+      applyFileSelection(
+        torrent,
+        torrent.__limboSelectedFileIndex,
+        Boolean(torrent.__limboSequential)
+      );
+    }
+
+    const status = buildStatus(torrentId, torrent);
     post({
       type: "event",
       event: "torrent-metadata",
       payload: {
         id: torrentId,
-        name,
-        size: torrent.length || 0,
+        name: status.name || name,
+        size: status.size,
         magnetUri: torrent.magnetURI || "",
         infoHash: torrent.infoHash,
       },
@@ -370,19 +710,21 @@ function attachTorrentLifecycle(torrentId: string, torrent: TorrentLike) {
   torrent.once("ready", sendMetadata);
 
   torrent.__limboProgressInterval = setInterval(() => {
+    const status = buildStatus(torrentId, torrent);
     post({
       type: "event",
       event: "torrent-progress",
       payload: {
         id: torrentId,
-        downloaded: torrent.downloaded || 0,
+        downloaded: status.downloaded,
         uploaded: enableSeeding ? (torrent.uploaded || 0) : 0,
-        progress: torrent.progress || 0,
-        downloadSpeed: torrent.downloadSpeed || 0,
-        uploadSpeed: enableSeeding ? (torrent.uploadSpeed || 0) : 0,
-        peers: torrent.numPeers || 0,
-        seeds: torrent.numPeers || 0,
-        done: Boolean(torrent.done),
+        progress: status.progress,
+        downloadSpeed: status.downloadSpeed,
+        uploadSpeed: status.uploadSpeed,
+        peers: status.peers,
+        seeds: status.seeds,
+        done: status.done,
+        size: status.size,
       },
     });
   }, 1000);
@@ -391,7 +733,7 @@ function attachTorrentLifecycle(torrentId: string, torrent: TorrentLike) {
     safeStopTorrent(torrent);
     post({ type: "event", event: "torrent-done", payload: { id: torrentId } });
 
-    if (!enableSeeding) {
+    if (!enableSeeding && !torrent.__limboKeepAlive) {
       try {
         torrent.destroy?.({ destroyStore: false });
       } catch (error) {
@@ -447,7 +789,17 @@ async function shutdownWorker(): Promise<void> {
 
 async function handleInit(message: Extract<WorkerRequest, { type: "init" }>) {
   enableSeeding = message.enableSeeding;
-  publicTrackers = message.publicTrackers || [];
+  publicTrackers =
+    message.publicTrackers && message.publicTrackers.length > 0
+      ? message.publicTrackers
+      : [
+          "http://tracker.bt4g.com:2095/announce",
+          "http://tracker2.dler.org:80/announce",
+          "wss://tracker.openwebtorrent.com",
+          "wss://tracker.webtorrent.dev",
+          "udp://open.stealth.si:80/announce",
+        ];
+  streamToken = message.streamToken || "";
 
   try {
     await ensureTorrentClient();
@@ -467,7 +819,8 @@ function getRequestId(message: WorkerRequest) {
   return null;
 }
 
-parentPort?.on("message", async (message: WorkerRequest) => {
+hostPort.onMessage(async (raw) => {
+  const message = raw as WorkerRequest;
   try {
     if (message.type === "init") {
       await handleInit(message);
@@ -496,19 +849,26 @@ parentPort?.on("message", async (message: WorkerRequest) => {
       }
 
       case "add-magnet": {
-        const torrent = torrentClient.add(message.magnetUri, {
+        const announce = resolveAnnounceList(message.announce);
+        const magnetUri = withAnnounceTrackers(message.magnetUri, announce);
+        const torrent = torrentClient.add(magnetUri, {
           path: message.downloadPath,
-          announce: message.announce.length > 0 ? message.announce : publicTrackers,
+          announce,
         });
 
         torrentsById.set(message.torrentId, torrent);
         torrentMetaById.set(message.torrentId, {
-          magnetUri: message.magnetUri,
+          magnetUri,
           downloadPath: message.downloadPath,
-          announce: message.announce.length > 0 ? message.announce : publicTrackers,
+          announce,
         });
         pausedTorrentMetaById.delete(message.torrentId);
-        applyTorrentUploadPolicy(torrent, enableSeeding);
+        torrent.__limboKeepAlive = Boolean(message.keepAlive);
+        torrent.__limboSelectedFileIndex =
+          typeof message.selectedFileIndex === "number" ? message.selectedFileIndex : null;
+        torrent.__limboSequential = message.sequential !== false;
+        torrent.__limboDownloadPath = message.downloadPath;
+        scheduleUploadPolicy(torrent, enableSeeding);
         attachTorrentLifecycle(message.torrentId, torrent);
         respondOk(message.requestId);
         return;
@@ -519,20 +879,26 @@ parentPort?.on("message", async (message: WorkerRequest) => {
           throw new Error("Torrent file not found");
         }
 
+        const announce = resolveAnnounceList(message.announce);
         const torrentBuffer = fs.readFileSync(message.filePath);
         const torrent = torrentClient.add(torrentBuffer, {
           path: message.downloadPath,
-          announce: message.announce.length > 0 ? message.announce : publicTrackers,
+          announce,
         });
 
         torrentsById.set(message.torrentId, torrent);
         torrentMetaById.set(message.torrentId, {
           magnetUri: "",
           downloadPath: message.downloadPath,
-          announce: message.announce.length > 0 ? message.announce : publicTrackers,
+          announce,
         });
         pausedTorrentMetaById.delete(message.torrentId);
-        applyTorrentUploadPolicy(torrent, enableSeeding);
+        torrent.__limboKeepAlive = Boolean(message.keepAlive);
+        torrent.__limboSelectedFileIndex =
+          typeof message.selectedFileIndex === "number" ? message.selectedFileIndex : null;
+        torrent.__limboSequential = message.sequential !== false;
+        torrent.__limboDownloadPath = message.downloadPath;
+        scheduleUploadPolicy(torrent, enableSeeding);
         attachTorrentLifecycle(message.torrentId, torrent);
         respondOk(message.requestId);
         return;
@@ -574,7 +940,7 @@ parentPort?.on("message", async (message: WorkerRequest) => {
         const existing = torrentsById.get(message.torrentId);
         if (existing) {
           existing.resume?.();
-          applyTorrentUploadPolicy(existing, enableSeeding);
+          scheduleUploadPolicy(existing, enableSeeding);
           respondOk(message.requestId);
           return;
         }
@@ -584,14 +950,16 @@ parentPort?.on("message", async (message: WorkerRequest) => {
           throw new Error("Torrent cannot be resumed yet (missing magnet metadata)");
         }
 
-        const torrent = torrentClient.add(meta.magnetUri, {
+        const announce = resolveAnnounceList(meta.announce);
+        const magnetUri = withAnnounceTrackers(meta.magnetUri, announce);
+        const torrent = torrentClient.add(magnetUri, {
           path: meta.downloadPath,
-          announce: meta.announce.length > 0 ? meta.announce : publicTrackers,
+          announce,
         });
         torrentsById.set(message.torrentId, torrent);
-        torrentMetaById.set(message.torrentId, meta);
+        torrentMetaById.set(message.torrentId, { ...meta, magnetUri, announce });
         pausedTorrentMetaById.delete(message.torrentId);
-        applyTorrentUploadPolicy(torrent, enableSeeding);
+        scheduleUploadPolicy(torrent, enableSeeding);
         attachTorrentLifecycle(message.torrentId, torrent);
         respondOk(message.requestId);
         return;
@@ -615,7 +983,7 @@ parentPort?.on("message", async (message: WorkerRequest) => {
       }
 
       case "get-files": {
-        const torrent = torrentClient.get(message.infoHash);
+        const torrent = await resolveTorrentByInfoHash(message.infoHash);
         if (!torrent) {
           respondOk(message.requestId, []);
           return;
@@ -632,6 +1000,26 @@ parentPort?.on("message", async (message: WorkerRequest) => {
             progress: file.progress,
           }))
         );
+        return;
+      }
+
+      case "select-file": {
+        const torrent = torrentsById.get(message.torrentId);
+        if (!torrent) {
+          throw new Error("Torrent not found");
+        }
+        applyFileSelection(torrent, message.fileIndex, message.sequential !== false);
+        respondOk(message.requestId, buildStatus(message.torrentId, torrent));
+        return;
+      }
+
+      case "get-status": {
+        const torrent = torrentsById.get(message.torrentId);
+        if (!torrent) {
+          respondOk(message.requestId, null);
+          return;
+        }
+        respondOk(message.requestId, buildStatus(message.torrentId, torrent));
         return;
       }
     }

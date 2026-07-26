@@ -1,7 +1,13 @@
-// Debrid service integration (Real-Debrid, AllDebrid, Premiumize)
+// Debrid service integration (Real-Debrid, AllDebrid, Premiumize, TorBox)
 
 import type { DebridConfig, DebridResult } from "./types.js";
 import { store } from "./store.js";
+import {
+  convertMagnetWithTorbox,
+  convertTorrentFileWithTorbox,
+  getTorboxSupportedHosts,
+  unrestrictWithTorbox,
+} from "./debrid-torbox.js";
 
 type DebridLinkEntry = {
   link?: string;
@@ -161,7 +167,7 @@ function flattenAllDebridLinks(value: unknown): string[] {
 }
 
 function supportsTorrentDebrid(service: DebridConfig["service"]) {
-  return service === "realdebrid" || service === "alldebrid";
+  return service === "realdebrid" || service === "alldebrid" || service === "torbox";
 }
 
 // Check and refresh token if needed
@@ -316,6 +322,14 @@ export async function unrestrictLink(url: string, debridConfig: DebridConfig): P
 
       console.warn(`[Debrid] Premiumize returned no download link. Response:`, data);
       return { url: null, error: "Premiumize: No download link returned." };
+    } else if (debrid.service === "torbox") {
+      const result = await unrestrictWithTorbox(url, debrid.apiKey);
+      if (result.url) {
+        console.log(`[Debrid] Successfully unrestricted link via TorBox`);
+      } else {
+        console.error(`[Debrid] TorBox error: ${result.error}`);
+      }
+      return result;
     }
 
     console.warn(`[Debrid] Unknown debrid service: ${debrid.service}`);
@@ -434,6 +448,8 @@ export async function convertMagnetWithDebrid(
         }
       }
       return null;
+    } else if (debrid.service === "torbox") {
+      return await convertMagnetWithTorbox(magnetUri, debrid.apiKey);
     }
   } catch (err) {
     console.error("Debrid magnet error:", err);
@@ -586,6 +602,14 @@ export async function convertTorrentFileWithDebrid(
 
       return links.length > 0 ? links : null;
     }
+
+    if (debrid.service === "torbox") {
+      return await convertTorrentFileWithTorbox(
+        remoteTorrent.buffer,
+        remoteTorrent.filename,
+        debrid.apiKey
+      );
+    }
   } catch (err) {
     console.error("Debrid torrent-file error:", err);
   }
@@ -679,6 +703,10 @@ export async function getSupportedHosts(
       hosts = [...new Set(hosts)];
       console.log(`[Debrid] Premiumize supports ${hosts.length} hosts`);
       return { hosts };
+    } else if (debrid.service === "torbox") {
+      const result = await getTorboxSupportedHosts(debrid.apiKey);
+      console.log(`[Debrid] TorBox supports ${result.hosts.length} hosts`);
+      return result;
     }
 
     return { hosts: [], error: `Unknown debrid service: ${debrid.service}` };

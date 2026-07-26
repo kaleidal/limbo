@@ -248,11 +248,26 @@ export function autoExtractArchiveAsync(
 export function parseMagnetDisplayName(magnetUri: string): string | null {
   try {
     const match = magnetUri.match(/[?&]dn=([^&]+)/i);
-    if (!match) return null;
+    if (!match?.[1]) return null;
     return decodeURIComponent(match[1].replace(/\+/g, "%20"));
   } catch {
     return null;
   }
+}
+
+export function parseMagnetInfoHash(magnetUri: string): string | null {
+  const match = magnetUri.match(/urn:btih:([a-zA-Z0-9]+)/i);
+  const hash = match?.[1];
+  return hash ? hash.toUpperCase() : null;
+}
+
+/** Human label for approval UI / torrent list before metadata arrives. */
+export function magnetLabel(magnetUri: string): string {
+  const named = parseMagnetDisplayName(magnetUri);
+  if (named) return named;
+  const hash = parseMagnetInfoHash(magnetUri);
+  if (hash) return `Torrent ${hash.slice(0, 8)}`;
+  return "Untitled torrent";
 }
 
 // Normalize CLI argument (strip quotes, file:// prefix)

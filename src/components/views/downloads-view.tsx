@@ -845,9 +845,16 @@ const TorrentItem = memo(function TorrentItem({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3 flex-1 min-w-0">
           {getStatusIcon(torrent.status)}
-          <span className="font-medium truncate" title={torrent.name}>
-            {torrent.name}
-          </span>
+          <div className="min-w-0 flex-1">
+            <span className="font-medium truncate block" title={torrent.name}>
+              {torrent.name}
+            </span>
+            {torrent.clientName ? (
+              <p className="text-xs text-neutral-500 truncate mt-0.5">
+                Added by {torrent.clientName}
+              </p>
+            ) : null}
+          </div>
         </div>
         <div className="flex items-center gap-4 text-sm text-neutral-400">
           <div className="flex items-center gap-1">

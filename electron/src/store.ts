@@ -28,6 +28,11 @@ export const store = new Store<StoreSchema>({
       requireVpn: false,
       autoExtract: true,
       deleteArchiveAfterExtract: false,
+      apiEnabled: true,
+      apiPort: 17890,
+      apiToken: "",
+      apiPromptPolicy: "always",
+      trustedApiClients: [],
       debrid: {
         service: null,
         apiKey: "",

@@ -6,7 +6,7 @@ import fs from "fs";
 import os from "os";
 import { v4 as uuidv4 } from "uuid";
 import { store } from "../store.js";
-import { isVpnConnected, parseMagnetDisplayName } from "../utils.js";
+import { isVpnConnected, magnetLabel } from "../utils.js";
 import {
   activeTorrentIds,
   callTorrentWorker,
@@ -55,7 +55,7 @@ function sanitizeRemoteTorrentFilename(url: string) {
 }
 
 function createStoredTorrentInfo(filePath: string, downloadPath: string): TorrentInfo {
-  const fallbackName = path.basename(filePath).replace(/\.torrent$/i, "") || "Loading torrent...";
+  const fallbackName = path.basename(filePath).replace(/\.torrent$/i, "") || "Untitled torrent";
 
   return {
     id: uuidv4(),
@@ -133,7 +133,7 @@ export function registerTorrentHandlers(getMainWindow: () => BrowserWindow | nul
     }
 
     const torrentId = uuidv4();
-    const displayName = parseMagnetDisplayName(magnetUri) || "Loading torrent...";
+    const displayName = magnetLabel(magnetUri);
     activeTorrentIds.add(torrentId);
 
     const torrentInfo: TorrentInfo = {

@@ -86,6 +86,7 @@ export interface LimboAPI {
   onTorrentProgress: (callback: (torrent: TorrentInfo) => void) => () => void;
   onTorrentComplete: (callback: (torrent: TorrentInfo) => void) => () => void;
   onTorrentError: (callback: (data: { id: string; error: string }) => void) => () => void;
+  onTorrentRemoved: (callback: (data: { id: string }) => void) => () => void;
   onClipboardDownloadDetected: (callback: (urls: string[]) => void) => () => void;
   onMagnetLinkOpened: (callback: (magnetUri: string) => void) => () => void;
   onTorrentFileOpened: (callback: (filePath: string) => void) => () => void;
@@ -169,7 +170,7 @@ interface Settings {
   autoExtract: boolean;
   deleteArchiveAfterExtract: boolean;
   debrid: {
-    service: "realdebrid" | "alldebrid" | "premiumize" | null;
+    service: "realdebrid" | "alldebrid" | "premiumize" | "torbox" | null;
     apiKey: string;
     refreshToken?: string;
     expiresAt?: number;
@@ -307,6 +308,11 @@ const api: LimboAPI = {
     const handler = (_: IpcRendererEvent, data: { id: string; error: string }) => callback(data);
     ipcRenderer.on("torrent-error", handler);
     return () => ipcRenderer.removeListener("torrent-error", handler);
+  },
+  onTorrentRemoved: (callback) => {
+    const handler = (_: IpcRendererEvent, data: { id: string }) => callback(data);
+    ipcRenderer.on("torrent-removed", handler);
+    return () => ipcRenderer.removeListener("torrent-removed", handler);
   },
   onClipboardDownloadDetected: (callback) => {
     const handler = (_: IpcRendererEvent, urls: string[]) => callback(urls);

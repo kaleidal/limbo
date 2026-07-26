@@ -68,8 +68,13 @@ export interface Settings {
   requireVpn: boolean;
   autoExtract: boolean;
   deleteArchiveAfterExtract: boolean;
+  apiEnabled?: boolean;
+  apiPort?: number;
+  apiToken?: string;
+  apiPromptPolicy?: "always" | "off";
+  trustedApiClients?: string[];
   debrid: {
-    service: "realdebrid" | "alldebrid" | "premiumize" | null;
+    service: "realdebrid" | "alldebrid" | "premiumize" | "torbox" | null;
     apiKey: string;
     refreshToken?: string;
     expiresAt?: number;
@@ -101,6 +106,11 @@ export interface TorrentInfo {
   path: string;
   infoHash?: string;
   lastError?: string;
+  selectedFileIndex?: number;
+  clientId?: string;
+  clientName?: string;
+  clientProvidedName?: boolean;
+  keepAlive?: boolean;
 }
 
 export interface TorrentFile {
@@ -198,6 +208,7 @@ export interface LimboAPI {
   onTorrentProgress: (callback: (torrent: TorrentInfo) => void) => () => void;
   onTorrentComplete: (callback: (torrent: TorrentInfo) => void) => () => void;
   onTorrentError: (callback: (data: { id: string; error: string }) => void) => () => void;
+  onTorrentRemoved: (callback: (data: { id: string }) => void) => () => void;
   onClipboardDownloadDetected: (callback: (urls: string[]) => void) => () => void;
   onMagnetLinkOpened: (callback: (magnetUri: string) => void) => () => void;
   onTorrentFileOpened: (callback: (filePath: string) => void) => () => void;

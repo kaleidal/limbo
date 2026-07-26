@@ -1,23 +1,47 @@
 // Torrent worker management
+// Runs in Electron utilityProcess — not worker_threads — because WebTorrent's
+// HTTP tracker client uses fetch, which fails inside worker threads (0 peers
+// when UDP trackers/DHT are blocked).
 
 import fs from "fs";
 import path from "path";
-import { Worker } from "worker_threads";
+import { utilityProcess, type UtilityProcess } from "electron";
 import { v4 as uuidv4 } from "uuid";
+import { ensureApiToken } from "./api/discovery.js";
 import { store } from "./store.js";
 import { detectCategory } from "./utils.js";
 import type { TorrentInfo } from "./types.js";
 
 type TorrentWorkerRequest =
-  | { type: "init"; enableSeeding: boolean; publicTrackers: string[] }
+  | { type: "init"; enableSeeding: boolean; publicTrackers: string[]; streamToken?: string }
   | { type: "shutdown" }
   | { type: "set-seeding"; enableSeeding: boolean }
-  | { type: "add-magnet"; torrentId: string; magnetUri: string; downloadPath: string; announce: string[] }
-  | { type: "add-file"; torrentId: string; filePath: string; downloadPath: string; announce: string[] }
+  | {
+      type: "add-magnet";
+      torrentId: string;
+      magnetUri: string;
+      downloadPath: string;
+      announce: string[];
+      keepAlive?: boolean;
+      selectedFileIndex?: number | null;
+      sequential?: boolean;
+    }
+  | {
+      type: "add-file";
+      torrentId: string;
+      filePath: string;
+      downloadPath: string;
+      announce: string[];
+      keepAlive?: boolean;
+      selectedFileIndex?: number | null;
+      sequential?: boolean;
+    }
   | { type: "pause"; torrentId: string }
   | { type: "resume"; torrentId: string }
   | { type: "remove"; torrentId: string; deleteFiles: boolean }
-  | { type: "get-files"; infoHash: string };
+  | { type: "get-files"; infoHash: string }
+  | { type: "select-file"; torrentId: string; fileIndex: number; sequential?: boolean }
+  | { type: "get-status"; torrentId: string };
 
 type TorrentWorkerEnvelope = TorrentWorkerRequest & { requestId?: string };
 
@@ -71,24 +95,30 @@ type TorrentProgressPayload = {
   peers?: number;
   seeds?: number;
   done?: boolean;
+  size?: number;
 };
 
 type TorrentDonePayload = { id: string };
 type TorrentErrorPayload = { id: string; error?: string };
 
 export const publicTrackers = [
-  "udp://tracker.opentrackr.org:1337/announce",
-  "udp://open.demonii.com:1337/announce",
-  "udp://tracker.openbittorrent.com:6969/announce",
-  "udp://exodus.desync.com:6969/announce",
-  "udp://tracker.torrent.eu.org:451/announce",
-  "udp://open.stealth.si:80/announce",
-  "udp://tracker.moeking.me:6969/announce",
-  "wss://tracker.btorrent.xyz",
+  // Prefer reachable HTTP trackers first — UDP/DHT often blocked (VPN/firewall).
+  // opentrackr:1337 frequently times out from restricted networks.
+  "http://tracker.bt4g.com:2095/announce",
+  "http://tracker2.dler.org:80/announce",
+  "http://open.trackerlist.xyz:80/announce",
   "wss://tracker.openwebtorrent.com",
+  "wss://tracker.webtorrent.dev",
+  "wss://tracker.btorrent.xyz",
+  "udp://tracker.opentrackr.org:1337/announce",
+  "udp://open.stealth.si:80/announce",
+  "udp://tracker.torrent.eu.org:451/announce",
+  "udp://exodus.desync.com:6969/announce",
+  "udp://open.demonii.com:1337/announce",
+  "udp://explodie.org:6969/announce",
 ];
 
-let torrentWorker: Worker | null = null;
+let torrentWorker: UtilityProcess | null = null;
 let torrentWorkerReady = false;
 let streamServerPort = 0;
 
@@ -215,7 +245,9 @@ function handleTorrentWorkerEvent(event: string, payload: unknown) {
     if (index === -1) return;
 
     const settings = store.get("settings");
-    const resolvedName = metadata.name || torrents[index].name;
+    const resolvedName = torrents[index].clientProvidedName
+      ? torrents[index].name
+      : metadata.name || torrents[index].name;
     torrents[index] = {
       ...clearTorrentError(torrents[index]),
       name: resolvedName,
@@ -245,6 +277,10 @@ function handleTorrentWorkerEvent(event: string, payload: unknown) {
       uploadSpeed: settings.enableSeeding ? (progressPayload.uploadSpeed || 0) : 0,
       peers: progressPayload.peers || 0,
       seeds: progressPayload.seeds || 0,
+      size:
+        typeof progressPayload.size === "number" && progressPayload.size > 0
+          ? progressPayload.size
+          : torrents[index].size,
       status: progressPayload.done
         ? "completed"
         : torrents[index].status === "paused"
@@ -316,7 +352,10 @@ function handleTorrentWorkerEvent(event: string, payload: unknown) {
 
 export async function initTorrentWorker(workerPath: string): Promise<void> {
   try {
-    torrentWorker = new Worker(workerPath);
+    torrentWorker = utilityProcess.fork(workerPath, [], {
+      serviceName: "limbo-torrent-engine",
+      stdio: ["ignore", "inherit", "inherit"],
+    });
 
     torrentWorker.on("message", (message: TorrentWorkerMessage) => {
       if (!message || typeof message !== "object") return;
@@ -364,11 +403,6 @@ export async function initTorrentWorker(workerPath: string): Promise<void> {
       }
     });
 
-    torrentWorker.on("error", (error) => {
-      console.warn("Torrent worker error", error);
-      torrentWorkerReady = false;
-    });
-
     torrentWorker.on("exit", (code) => {
       console.warn("Torrent worker exited", code);
       torrentWorkerReady = false;
@@ -376,7 +410,13 @@ export async function initTorrentWorker(workerPath: string): Promise<void> {
     });
 
     const settings = store.get("settings");
-    torrentWorker.postMessage({ type: "init", enableSeeding: settings.enableSeeding, publicTrackers });
+    const streamToken = ensureApiToken();
+    torrentWorker.postMessage({
+      type: "init",
+      enableSeeding: settings.enableSeeding,
+      publicTrackers,
+      streamToken,
+    });
   } catch (error) {
     console.warn("Torrent worker failed to start. Torrent support disabled.", error);
     torrentWorkerReady = false;
@@ -444,7 +484,7 @@ export async function shutdownTorrentWorker(): Promise<void> {
   torrentWorker = null;
 
   try {
-    await worker.terminate();
+    worker.kill();
   } catch (error) {
     console.warn("Failed to terminate torrent worker", error);
   }

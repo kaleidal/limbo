@@ -8,7 +8,7 @@ Limbo is a desktop software manager built with Electron, React, and TypeScript. 
 
 - Direct HTTP/HTTPS downloads with queue management
 - Torrent downloads from magnet links and `.torrent` files
-- Real-Debrid, AllDebrid, and Premiumize support for supported flows
+- Real-Debrid, AllDebrid, Premiumize, and TorBox support for supported flows
 - Embedded browser with bookmarks, popup blocking, and short-lived session memory
 - Automatic archive extraction after download
 - Local library for downloaded software, media, archives, and other files
@@ -78,6 +78,20 @@ Notes:
 - Development mode does not perform update checks
 - Release distribution is configured for GitHub Releases
 
+## Companion API
+
+Limbo exposes a localhost HTTP API so other apps (for example Raffi) can add magnets and stream files without embedding a torrent client.
+
+- Health: `GET http://127.0.0.1:17890/v1/health`
+- Add torrent: `POST /v1/torrents` with `{ "magnet": "...", "fileIndex": 0, "sequential": true, "clientId": "raffi" }` and `Authorization: Bearer <token>`
+- Status: `GET /v1/torrents/:id`
+- Stream: `GET /v1/stream/:infoHash/:fileIndex?token=<token>` (Range requests supported)
+- Discovery file: `%APPDATA%/limbo/api.json` (or Limbo userData) contains `{ port, token, baseUrl }`
+
+Toggle the API under Settings → Torrent Settings → Companion API.
+
+When an app adds a torrent, Limbo shows a system-wide approval prompt. Identity is resolved from the **localhost TCP peer** (process path + OS icon via Electron `getFileIcon`), not from fields the client sends. Self-reported names/icons are shown only as claims if they disagree. “Always allow” trusts that executable path.
+
 ## Associations
 
 Packaged builds register support for:
@@ -89,13 +103,13 @@ Packaged builds register support for:
 
 ### Torrent Support
 
-If torrent support fails because of a native dependency issue, try:
+If Limbo’s API is up but torrents fail with `torrent engine is not ready`, or the log shows `Cannot find module ... node_datachannel.node`, the WebTorrent native binary is missing (common after `bun install`, which can skip install scripts).
 
 ```bash
-npx electron-rebuild
+bun run rebuild:native
 ```
 
-If you are working with a specific native module manually, rebuilding that module may also help.
+That rebuilds Electron-ABI modules (`bufferutil`, `utf-8-validate`, `utp-native`) and ensures the `node-datachannel` N-API prebuild is present. Restart Limbo afterward.
 
 ## License
 

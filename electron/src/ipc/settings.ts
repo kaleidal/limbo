@@ -5,6 +5,8 @@ import path from "path";
 import { store } from "../store.js";
 import { updateTorrentSeeding, callTorrentWorker, activeTorrentIds } from "../torrent.js";
 import { activeDownloads } from "../downloads/index.js";
+import { startApiServer, stopApiServer } from "../api/server.js";
+import { ensureApiToken } from "../api/discovery.js";
 
 export function registerSettingsHandlers(getMainWindow: () => BrowserWindow | null) {
   ipcMain.handle("get-settings", () => store.get("settings"));
@@ -49,6 +51,11 @@ export function registerSettingsHandlers(getMainWindow: () => BrowserWindow | nu
         requireVpn: false,
         autoExtract: true,
         deleteArchiveAfterExtract: false,
+        apiEnabled: currentSettings.apiEnabled !== false,
+        apiPort: currentSettings.apiPort || 17890,
+        apiToken: currentSettings.apiToken || "",
+        apiPromptPolicy: currentSettings.apiPromptPolicy || "always",
+        trustedApiClients: currentSettings.trustedApiClients || [],
         debrid: {
           service: null,
           apiKey: "",
@@ -70,9 +77,12 @@ export function registerSettingsHandlers(getMainWindow: () => BrowserWindow | nu
     }
   });
 
-  ipcMain.handle("update-settings", (_, settings) => {
+  ipcMain.handle("update-settings", async (_, settings) => {
     const current = store.get("settings");
     const updated = { ...current, ...settings };
+    if (!updated.apiToken) {
+      updated.apiToken = ensureApiToken();
+    }
     store.set("settings", updated);
 
     if (typeof settings.enableSeeding === "boolean" && settings.enableSeeding !== current.enableSeeding) {
@@ -81,6 +91,17 @@ export function registerSettingsHandlers(getMainWindow: () => BrowserWindow | nu
 
     if (typeof settings.startOnBoot === "boolean" && settings.startOnBoot !== current.startOnBoot) {
       app.setLoginItemSettings({ openAtLogin: settings.startOnBoot, openAsHidden: false });
+    }
+
+    const apiChanged =
+      (typeof settings.apiEnabled === "boolean" && settings.apiEnabled !== current.apiEnabled) ||
+      (typeof settings.apiPort === "number" && settings.apiPort !== current.apiPort);
+
+    if (apiChanged) {
+      await stopApiServer();
+      if (updated.apiEnabled !== false) {
+        await startApiServer();
+      }
     }
 
     return updated;

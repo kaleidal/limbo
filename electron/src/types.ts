@@ -62,10 +62,17 @@ export interface TorrentInfo {
   path: string;
   infoHash?: string;
   lastError?: string;
+  selectedFileIndex?: number;
+  clientId?: string;
+  /** Display name of the companion app that added this torrent (e.g. Raffi). */
+  clientName?: string;
+  /** When true, keep `name` from the client instead of replacing with torrent metadata. */
+  clientProvidedName?: boolean;
+  keepAlive?: boolean;
 }
 
 export interface DebridConfig {
-  service: "realdebrid" | "alldebrid" | "premiumize" | null;
+  service: "realdebrid" | "alldebrid" | "premiumize" | "torbox" | null;
   apiKey: string;
   refreshToken?: string;
   expiresAt?: number;
@@ -83,6 +90,13 @@ export interface Settings {
   autoExtract: boolean;
   deleteArchiveAfterExtract: boolean;
   debrid: DebridConfig;
+  /** Localhost companion API for apps like Raffi. Default on. */
+  apiEnabled?: boolean;
+  apiPort?: number;
+  apiToken?: string;
+  /** always = prompt unless trusted; off = auto-approve authenticated clients */
+  apiPromptPolicy?: "always" | "off";
+  trustedApiClients?: string[];
 }
 
 export interface StoreSchema {

@@ -40,10 +40,10 @@ jobs:
           fi
 
       - name: Electron Rebuild
-        run: npx electron-rebuild
+        run: npx electron-rebuild -f -w bufferutil,utf-8-validate,utp-native --force-abi 148
 
-      - name: Rebuild node-datachannel
-        run: npm rebuild node-datachannel
+      - name: Ensure node-datachannel native binary
+        run: node scripts/ensure-node-datachannel.mjs
 
       - name: Build (electron-builder)
         if: ${{ inputs.publish != true }}
