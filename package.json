@@ -19,7 +19,10 @@
     "postinstall": "node scripts/ensure-node-datachannel.mjs",
     "generate-icons": "npx tsx scripts/generate-icons.ts",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:fenestra": "cd desktop && cargo run",
+    "build:fenestra": "bun run build && cd desktop && cargo build --release",
+    "dev:desktop": "cd desktop && cargo run"
   },
   "build": {
     "appId": "al.kaleid.limbo",

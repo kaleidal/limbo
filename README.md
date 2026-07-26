@@ -1,6 +1,6 @@
 # Limbo
 
-Limbo is a desktop software manager built with Electron, React, and TypeScript. It combines a browser, direct download manager, torrent client, Debrid integration, extraction pipeline, and library view into one app.
+Limbo is a desktop software manager with an integrated browser, download manager, torrent client, Debrid integration, extraction pipeline, and library view. The UI is React + TypeScript. The primary desktop host is **Fenestra** (Rust); the Electron host remains available during the port.
 
 ![Limbo preview](./preview.png)
 
@@ -16,14 +16,12 @@ Limbo is a desktop software manager built with Electron, React, and TypeScript. 
 
 ## Tech Stack
 
-- Electron
-- Vite
-- React 19
-- TypeScript
+- Fenestra (Rust desktop host; WebView2 on Windows, CEF on Linux)
+- librqbit for torrents
+- Vite + React 19 + TypeScript
 - Tailwind CSS
 - Base UI / shadcn-style components
-- WebTorrent
-- electron-store
+- Electron + WebTorrent (legacy host, still buildable)
 
 ## Legal Notice
 
@@ -35,38 +33,52 @@ Users are solely responsible for ensuring they have the legal right to access, d
 
 ### Prerequisites
 
-- Node.js
-- npm
+- [Bun](https://bun.sh)
+- Rust (stable, 1.89+)
+- A local checkout of [Fenestra](https://github.com/Misoworks/Fenestra) at `../fenestra` (sibling of this repo)
+- WebView2 Runtime on Windows
 
 ### Install
 
 ```bash
-npm install
+bun install
 ```
 
-### Run In Development
+### Run In Development (Fenestra)
 
 ```bash
-npm run dev:electron
+bun run dev:fenestra
 ```
 
-This starts the Vite renderer and launches Electron against the local dev server.
+This builds/runs the Rust host in `desktop/`. In development it starts the Vite UI on port 5177 and loads it in Fenestra.
+
+### Run In Development (Electron, legacy)
+
+```bash
+bun run dev:electron
+```
 
 ## Build
 
-### Build Renderer + Electron Bundles
+### Build Renderer
 
 ```bash
-npm run build
+bun run build
 ```
 
-### Build Installers
+### Build Fenestra Host
 
 ```bash
-npm run build:electron
+bun run build:fenestra
 ```
 
-Packaged builds are created with `electron-builder`.
+### Build Electron Installers (legacy)
+
+```bash
+bun run build:electron
+```
+
+Packaged Electron builds are created with `electron-builder`.
 
 ## Auto Updates
 
