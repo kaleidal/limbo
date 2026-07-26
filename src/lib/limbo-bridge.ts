@@ -6,6 +6,7 @@ declare global {
       window: {
         minimize: () => void;
         maximize: () => void;
+        toggleMaximize?: () => void;
         close: () => void;
       };
       bridge: {
@@ -108,7 +109,7 @@ export function installLimboBridge() {
 
   window.limbo = {
     minimize: () => window.fenestra?.window.minimize(),
-    maximize: () => window.fenestra?.window.maximize(),
+    maximize: () => window.fenestra?.window.toggleMaximize?.() ?? window.fenestra?.window.maximize(),
     close: () => window.fenestra?.window.close(),
     openExternal: (url) => invoke("limbo.openExternal", { url }),
 

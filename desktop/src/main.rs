@@ -33,18 +33,31 @@ fn main() {
     let app = Arc::new(AppState::new(store, handle.clone()));
 
     let download_path = app.store.with(|d| d.settings.download_path.clone());
-    if let Err(error) = runtime.block_on(app.torrent_engine.init(&download_path)) {
-        tracing::error!("torrent engine init failed: {error}");
+    {
+        let app = app.clone();
+        let download_path = download_path.clone();
+        runtime.spawn(async move {
+            if let Err(error) = app.torrent_engine.init(&download_path).await {
+                tracing::error!("torrent engine init failed: {error}");
+            } else {
+                *app.stream_port.lock() = app.torrent_engine.stream_port();
+            }
+        });
     }
-    *app.stream_port.lock() = app.torrent_engine.stream_port();
 
-    match runtime.block_on(ApiServer::start(app.clone(), data_dir.clone())) {
-        Ok(Some(port)) => tracing::info!("companion API listening on 127.0.0.1:{port}"),
-        Ok(None) => tracing::info!("companion API disabled"),
-        Err(error) => tracing::error!("companion API failed: {error}"),
+    {
+        let app = app.clone();
+        let data_dir = data_dir.clone();
+        runtime.spawn(async move {
+            match ApiServer::start(app, data_dir).await {
+                Ok(Some(port)) => tracing::info!("companion API listening on 127.0.0.1:{port}"),
+                Ok(None) => tracing::info!("companion API disabled"),
+                Err(error) => tracing::error!("companion API failed: {error}"),
+            }
+        });
     }
 
-    let _clipboard = ClipboardWatcher::start(app.clone(), Duration::from_millis(100));
+    let _clipboard = ClipboardWatcher::start(app.clone(), Duration::from_millis(250));
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir
@@ -52,6 +65,9 @@ fn main() {
         .map(PathBuf::from)
         .unwrap_or_else(|| manifest_dir.clone());
     let dist_entry = repo_root.join("dist").join("index.html");
+    let dev_mode = std::env::var_os("LIMBO_DEV").is_some()
+        || cfg!(debug_assertions)
+        || args.iter().any(|arg| arg == "--dev");
 
     let fenestra_runtime = RuntimeConfig {
         mode: RuntimeMode::SharedPreferred,
@@ -65,22 +81,24 @@ fn main() {
         .title("Limbo")
         .size(1400, 900)
         .frameless()
-        .titlebar_drag_region(40)
         .lifecycle_policy(FenestraLifecyclePolicy::browser_tab())
-        .runtime(fenestra_runtime)
-        .dev_url("http://localhost:5177")
-        .dev_command(format!(
-            "bun run --cwd \"{}\" dev",
-            repo_root.display()
-        ));
+        .runtime(fenestra_runtime);
 
-    if dist_entry.exists() {
+    if dev_mode {
+        window = window
+            .dev_url("http://127.0.0.1:5177")
+            .dev_command("bun run dev");
+    } else if dist_entry.exists() {
         window = window.entry(dist_entry.to_string_lossy());
+    } else {
+        window = window
+            .dev_url("http://127.0.0.1:5177")
+            .dev_command("bun run dev");
     }
 
     window = ipc::attach(window, app.clone());
 
-    tracing::info!("starting Limbo on Fenestra");
+    tracing::info!("starting Limbo on Fenestra (dev={dev_mode})");
     match window.launch_or_install() {
         Ok(process) => {
             tracing::info!("Limbo window closed (pid {})", process.id());

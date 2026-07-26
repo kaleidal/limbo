@@ -12,15 +12,7 @@ import {
   Popcorn,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { isFenestraRuntime } from "@/lib/limbo-bridge";
-import type { Bookmark, ElectronWebviewElement } from "@/types/electron.d";
-
-type WebviewNavigationEvent = Event & {
-  url: string;
-  errorCode?: number;
-  errorDescription?: string;
-  preventDefault?: () => void;
-};
+import type { Bookmark } from "@/types/electron.d";
 
 export function BrowserView() {
   const { activeBookmark, clearExpiredBrowserSessions } = useAppStore();
@@ -37,11 +29,7 @@ export function BrowserView() {
     );
   }
 
-  if (isFenestraRuntime()) {
-    return <FenestraBookmarkBrowser key={activeBookmark.id} bookmark={activeBookmark} />;
-  }
-
-  return <ElectronBookmarkBrowser key={activeBookmark.id} bookmark={activeBookmark} />;
+  return <GuestBookmarkBrowser key={activeBookmark.id} bookmark={activeBookmark} />;
 }
 
 function BrowserChrome({
@@ -160,7 +148,7 @@ function BrowserChrome({
   );
 }
 
-function FenestraBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
+function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   const { getBrowserSessionUrl, rememberBrowserSession } = useAppStore();
   const hostRef = useRef<HTMLDivElement>(null);
   const guestIdRef = useRef<string | null>(null);
@@ -176,7 +164,10 @@ function FenestraBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   useLayoutEffect(() => {
     const guestApi = window.fenestra?.guest;
     const host = hostRef.current;
-    if (!guestApi || !host) return;
+    if (!guestApi || !host) {
+      setError("Guest browser unavailable");
+      return;
+    }
 
     let cancelled = false;
     const guestId = `limbo-browser-${bookmark.id}`;
@@ -311,156 +302,6 @@ function FenestraBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       }}
     >
       <div ref={hostRef} className="flex-1 w-full min-h-0 bg-neutral-950" />
-    </BrowserChrome>
-  );
-}
-
-function ElectronBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
-  const { getBrowserSessionUrl, rememberBrowserSession } = useAppStore();
-  const webviewRef = useRef<ElectronWebviewElement>(null);
-  const initialUrl = getBrowserSessionUrl(bookmark.id, bookmark.url);
-  const [currentUrl, setCurrentUrl] = useState(initialUrl);
-  const [isLoading, setIsLoading] = useState(false);
-  const [canGoBack, setCanGoBack] = useState(false);
-  const [canGoForward, setCanGoForward] = useState(false);
-  const [isSecure, setIsSecure] = useState(initialUrl.startsWith("https://"));
-  const [blockPopups, setBlockPopups] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const webview = webviewRef.current;
-    if (!webview) return;
-
-    const handleDidStartLoading = () => {
-      setIsLoading(true);
-      setError(null);
-    };
-
-    const handleDidStopLoading = () => {
-      setIsLoading(false);
-      try {
-        setCanGoBack(webview.canGoBack());
-        setCanGoForward(webview.canGoForward());
-      } catch {
-        // Webview can briefly disappear during navigation resets.
-      }
-    };
-
-    const handleDidNavigate = (event: Event) => {
-      const navigationEvent = event as WebviewNavigationEvent;
-      setCurrentUrl(navigationEvent.url);
-      setIsSecure(navigationEvent.url.startsWith("https://"));
-      rememberBrowserSession(bookmark.id, navigationEvent.url);
-    };
-
-    const handleDidNavigateInPage = (event: Event) => {
-      const navigationEvent = event as WebviewNavigationEvent;
-      setCurrentUrl(navigationEvent.url);
-      setIsSecure(navigationEvent.url.startsWith("https://"));
-      rememberBrowserSession(bookmark.id, navigationEvent.url);
-    };
-
-    const handleDidFailLoad = (event: Event) => {
-      const navigationEvent = event as WebviewNavigationEvent;
-      if (navigationEvent.errorCode !== -3) {
-        setError(`Failed to load: ${navigationEvent.errorDescription || "Unknown error"}`);
-      }
-      setIsLoading(false);
-    };
-
-    const handleWillNavigate = (event: Event) => {
-      const navigationEvent = event as WebviewNavigationEvent;
-      if (navigationEvent.url.startsWith("magnet:")) {
-        navigationEvent.preventDefault?.();
-        navigator.clipboard.writeText(navigationEvent.url).catch(() => undefined);
-      }
-    };
-
-    const handleNewWindow = (event: Event) => {
-      const navigationEvent = event as WebviewNavigationEvent;
-      if (blockPopups) {
-        navigationEvent.preventDefault?.();
-        return;
-      }
-
-      if (navigationEvent.url.startsWith("magnet:")) {
-        navigationEvent.preventDefault?.();
-        navigator.clipboard.writeText(navigationEvent.url).catch(() => undefined);
-      }
-    };
-
-    webview.addEventListener("did-start-loading", handleDidStartLoading);
-    webview.addEventListener("did-stop-loading", handleDidStopLoading);
-    webview.addEventListener("did-navigate", handleDidNavigate);
-    webview.addEventListener("did-navigate-in-page", handleDidNavigateInPage);
-    webview.addEventListener("did-fail-load", handleDidFailLoad);
-    webview.addEventListener("will-navigate", handleWillNavigate);
-    webview.addEventListener("new-window", handleNewWindow);
-
-    return () => {
-      webview.removeEventListener("did-start-loading", handleDidStartLoading);
-      webview.removeEventListener("did-stop-loading", handleDidStopLoading);
-      webview.removeEventListener("did-navigate", handleDidNavigate);
-      webview.removeEventListener("did-navigate-in-page", handleDidNavigateInPage);
-      webview.removeEventListener("did-fail-load", handleDidFailLoad);
-      webview.removeEventListener("will-navigate", handleWillNavigate);
-      webview.removeEventListener("new-window", handleNewWindow);
-    };
-  }, [blockPopups, bookmark.id, rememberBrowserSession]);
-
-  const handleUrlSubmit = (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!webviewRef.current) return;
-
-    let nextUrl = currentUrl.trim();
-    if (!nextUrl.startsWith("http://") && !nextUrl.startsWith("https://")) {
-      nextUrl = `https://${nextUrl}`;
-    }
-
-    webviewRef.current.src = nextUrl;
-    setCurrentUrl(nextUrl);
-    setIsSecure(nextUrl.startsWith("https://"));
-    rememberBrowserSession(bookmark.id, nextUrl);
-  };
-
-  return (
-    <BrowserChrome
-      currentUrl={currentUrl}
-      setCurrentUrl={setCurrentUrl}
-      isLoading={isLoading}
-      canGoBack={canGoBack}
-      canGoForward={canGoForward}
-      isSecure={isSecure}
-      blockPopups={blockPopups}
-      setBlockPopups={setBlockPopups}
-      error={error}
-      onGoBack={() => webviewRef.current?.goBack()}
-      onGoForward={() => webviewRef.current?.goForward()}
-      onReload={() => webviewRef.current?.reload()}
-      onHome={() => {
-        if (webviewRef.current) {
-          webviewRef.current.src = bookmark.url;
-          setCurrentUrl(bookmark.url);
-          setIsSecure(bookmark.url.startsWith("https://"));
-          rememberBrowserSession(bookmark.id, bookmark.url);
-          setError(null);
-        }
-      }}
-      onUrlSubmit={handleUrlSubmit}
-      onOpenExternal={() => {
-        if (currentUrl && window.limbo) {
-          window.limbo.openExternal(currentUrl).catch(() => undefined);
-        }
-      }}
-    >
-      <webview
-        ref={webviewRef}
-        src={initialUrl}
-        className="flex-1 w-full"
-        partition="persist:limbo"
-        allowpopups={true}
-        webpreferences="javascript=yes"
-      />
     </BrowserChrome>
   );
 }
