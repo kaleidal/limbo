@@ -149,17 +149,28 @@ function BrowserChrome({
 }
 
 function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
-  const { getBrowserSessionUrl, rememberBrowserSession } = useAppStore();
+  const { getBrowserSessionUrl, rememberBrowserSession, guestOcclusionDepth } = useAppStore();
   const hostRef = useRef<HTMLDivElement>(null);
   const guestIdRef = useRef<string | null>(null);
-  const initialUrl = getBrowserSessionUrl(bookmark.id, bookmark.url);
-  const [currentUrl, setCurrentUrl] = useState(initialUrl);
+  const guestReadyRef = useRef(false);
+  const guestEpochRef = useRef(0);
+  const blockPopupsRef = useRef(false);
+  const startUrl = getBrowserSessionUrl(bookmark.id, bookmark.url);
+  const [currentUrl, setCurrentUrl] = useState(startUrl);
   const [isLoading, setIsLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
-  const [isSecure, setIsSecure] = useState(initialUrl.startsWith("https://"));
+  const [isSecure, setIsSecure] = useState(startUrl.startsWith("https://"));
   const [blockPopups, setBlockPopups] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  blockPopupsRef.current = blockPopups;
+
+  useEffect(() => {
+    const id = guestIdRef.current;
+    if (!id || !guestReadyRef.current || !window.fenestra?.guest) return;
+    void window.fenestra.guest.setVisible(id, guestOcclusionDepth === 0).catch(() => undefined);
+  }, [guestOcclusionDepth]);
 
   useLayoutEffect(() => {
     const guestApi = window.fenestra?.guest;
@@ -169,41 +180,28 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       return;
     }
 
-    let cancelled = false;
-    const guestId = `limbo-browser-${bookmark.id}`;
-    guestIdRef.current = guestId;
+    const epoch = ++guestEpochRef.current;
+    const guestId = `limbo-browser-${bookmark.id}-${epoch}`;
+    const url = getBrowserSessionUrl(bookmark.id, bookmark.url);
+    guestReadyRef.current = false;
+    guestIdRef.current = null;
+
+    const isCurrent = () => guestEpochRef.current === epoch;
 
     const syncBounds = async () => {
+      if (!isCurrent() || !guestReadyRef.current || guestIdRef.current !== guestId) return;
       const rect = host.getBoundingClientRect();
-      await guestApi.setBounds(guestId, {
-        x: Math.round(rect.left),
-        y: Math.round(rect.top),
-        width: Math.max(1, Math.round(rect.width)),
-        height: Math.max(1, Math.round(rect.height)),
-      });
-    };
-
-    void (async () => {
       try {
-        await guestApi.create({
-          id: guestId,
-          url: initialUrl,
-          partition: "persist:limbo",
-          popupPolicy: blockPopups ? "deny" : "navigateSame",
-          bounds: { x: 0, y: 0, width: 1, height: 1 },
-          visible: true,
+        await guestApi.setBounds(guestId, {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.max(1, Math.round(rect.width)),
+          height: Math.max(1, Math.round(rect.height)),
         });
-        if (cancelled) {
-          await guestApi.destroy(guestId);
-          return;
-        }
-        await syncBounds();
-      } catch (createError) {
-        if (!cancelled) {
-          setError(createError instanceof Error ? createError.message : "Failed to create browser");
-        }
+      } catch {
+        // Guest may have been destroyed during teardown/remount.
       }
-    })();
+    };
 
     const resizeObserver = new ResizeObserver(() => {
       void syncBounds();
@@ -212,8 +210,13 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     window.addEventListener("resize", syncBounds);
 
     const unlistenNavigated = window.fenestra?.bridge.listen("guest.navigated", (payload) => {
-      const data = payload as { id?: string; url?: string; canGoBack?: boolean; canGoForward?: boolean };
-      if (data.id !== guestId) return;
+      const data = payload as {
+        id?: string;
+        url?: string;
+        canGoBack?: boolean;
+        canGoForward?: boolean;
+      };
+      if (!isCurrent() || data.id !== guestId) return;
       if (data.url?.startsWith("magnet:")) {
         navigator.clipboard.writeText(data.url).catch(() => undefined);
         return;
@@ -231,22 +234,59 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
 
     const unlistenLoading = window.fenestra?.bridge.listen("guest.loading", (payload) => {
       const data = payload as { id?: string; isLoading?: boolean };
-      if (data.id !== guestId) return;
+      if (!isCurrent() || data.id !== guestId) return;
       setIsLoading(Boolean(data.isLoading));
     });
 
+    void (async () => {
+      try {
+        const rect = host.getBoundingClientRect();
+        await guestApi.create({
+          id: guestId,
+          url,
+          partition: "persist:limbo",
+          popupPolicy: blockPopupsRef.current ? "deny" : "navigateSame",
+          bounds: {
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.max(1, Math.round(rect.width)),
+            height: Math.max(1, Math.round(rect.height)),
+          },
+          visible: useAppStore.getState().guestOcclusionDepth === 0,
+          backgroundColor: "#0a0a0a",
+        });
+        // StrictMode / remount: a newer effect owns the slot — leave its guest alone.
+        if (guestEpochRef.current !== epoch) return;
+        guestIdRef.current = guestId;
+        guestReadyRef.current = true;
+        await syncBounds();
+        const showGuest = useAppStore.getState().guestOcclusionDepth === 0;
+        await guestApi.setVisible(guestId, showGuest).catch(() => undefined);
+        setError(null);
+      } catch (createError) {
+        if (guestEpochRef.current === epoch) {
+          setError(createError instanceof Error ? createError.message : "Failed to create browser");
+        }
+      }
+    })();
+
     return () => {
-      cancelled = true;
+      if (guestEpochRef.current === epoch) {
+        guestEpochRef.current += 1;
+      }
+      if (guestIdRef.current === guestId) {
+        guestReadyRef.current = false;
+        guestIdRef.current = null;
+      }
       resizeObserver.disconnect();
       window.removeEventListener("resize", syncBounds);
       unlistenNavigated?.();
       unlistenLoading?.();
-      void guestApi.destroy(guestId);
-      guestIdRef.current = null;
+      void guestApi.destroy(guestId).catch(() => undefined);
     };
-  }, [bookmark.id, bookmark.url, blockPopups, initialUrl, rememberBrowserSession]);
+  }, [bookmark.id, bookmark.url, getBrowserSessionUrl, rememberBrowserSession]);
 
-  const guestId = () => guestIdRef.current;
+  const guestId = () => (guestReadyRef.current ? guestIdRef.current : null);
 
   const handleUrlSubmit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -256,7 +296,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     if (!nextUrl.startsWith("http://") && !nextUrl.startsWith("https://")) {
       nextUrl = `https://${nextUrl}`;
     }
-    void window.fenestra.guest.navigate(id, nextUrl);
+    void window.fenestra.guest.navigate(id, nextUrl).catch(() => undefined);
     setCurrentUrl(nextUrl);
     setIsSecure(nextUrl.startsWith("https://"));
     rememberBrowserSession(bookmark.id, nextUrl);
@@ -275,20 +315,20 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       error={error}
       onGoBack={() => {
         const id = guestId();
-        if (id) void window.fenestra?.guest?.goBack(id);
+        if (id) void window.fenestra?.guest?.goBack(id).catch(() => undefined);
       }}
       onGoForward={() => {
         const id = guestId();
-        if (id) void window.fenestra?.guest?.goForward(id);
+        if (id) void window.fenestra?.guest?.goForward(id).catch(() => undefined);
       }}
       onReload={() => {
         const id = guestId();
-        if (id) void window.fenestra?.guest?.reload(id);
+        if (id) void window.fenestra?.guest?.reload(id).catch(() => undefined);
       }}
       onHome={() => {
         const id = guestId();
         if (!id || !window.fenestra?.guest) return;
-        void window.fenestra.guest.navigate(id, bookmark.url);
+        void window.fenestra.guest.navigate(id, bookmark.url).catch(() => undefined);
         setCurrentUrl(bookmark.url);
         setIsSecure(bookmark.url.startsWith("https://"));
         rememberBrowserSession(bookmark.id, bookmark.url);
@@ -301,7 +341,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
         }
       }}
     >
-      <div ref={hostRef} className="flex-1 w-full min-h-0 bg-neutral-950" />
+      <div ref={hostRef} className="min-h-0 w-full flex-1 bg-neutral-950" />
     </BrowserChrome>
   );
 }

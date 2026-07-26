@@ -1,6 +1,7 @@
-use std::net::TcpStream;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,13 +15,20 @@ use limbo_desktop::state::AppState;
 use limbo_desktop::store::Store;
 use tracing_subscriber::EnvFilter;
 
-const DEV_URL: &str = "http://127.0.0.1:5177";
+const DEV_URL: &str = "http://localhost:5177";
 const DEV_PORT: u16 = 5177;
+
+static DEV_SERVER_PID: AtomicU32 = AtomicU32::new(0);
 
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("limbo=info".parse().unwrap()))
         .init();
+
+    let _ = ctrlc::set_handler(|| {
+        shutdown_dev_server();
+        std::process::exit(130);
+    });
 
     let args = std::env::args().collect::<Vec<_>>();
     if run_fenestra_host_from_args(&args) {
@@ -89,25 +97,20 @@ fn main() {
         .lifecycle_policy(FenestraLifecyclePolicy::browser_tab())
         .runtime(fenestra_runtime);
 
-    let mut vite: Option<Child> = None;
-    if dev_mode {
+    let mut vite = None;
+    if dev_mode || !dist_entry.exists() {
         vite = ensure_vite(&repo_root);
         window = window.dev_url(DEV_URL);
-    } else if dist_entry.exists() {
-        window = window.entry(dist_entry.to_string_lossy());
     } else {
-        vite = ensure_vite(&repo_root);
-        window = window.dev_url(DEV_URL);
+        window = window.entry(dist_entry.to_string_lossy());
     }
 
     window = ipc::attach(window, app.clone());
 
-    tracing::info!("starting Limbo on Fenestra (dev={dev_mode})");
+    tracing::info!("opening Limbo window (dev={dev_mode})");
+    // On Windows WebView2, launch_or_install runs the UI event loop and only
+    // returns after the window closes.
     let result = window.launch_or_install();
-    if let Some(mut child) = vite.take() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
 
     match result {
         Ok(process) => {
@@ -115,13 +118,39 @@ fn main() {
             let _ = process.wait();
         }
         Err(error) => {
+            drop(vite);
+            shutdown_dev_server();
             eprintln!("failed to launch Limbo: {error}");
             std::process::exit(1);
         }
     }
+
+    drop(vite);
+    shutdown_dev_server();
 }
 
-fn ensure_vite(repo_root: &Path) -> Option<Child> {
+struct DevServer {
+    child: Child,
+}
+
+impl DevServer {
+    fn new(child: Child) -> Self {
+        DEV_SERVER_PID.store(child.id(), Ordering::SeqCst);
+        Self { child }
+    }
+}
+
+impl Drop for DevServer {
+    fn drop(&mut self) {
+        let pid = self.child.id();
+        kill_process_tree(pid);
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = DEV_SERVER_PID.compare_exchange(pid, 0, Ordering::SeqCst, Ordering::SeqCst);
+    }
+}
+
+fn ensure_vite(repo_root: &Path) -> Option<DevServer> {
     if port_open(DEV_PORT) {
         tracing::info!("vite already listening on {DEV_PORT}");
         return None;
@@ -141,25 +170,61 @@ fn ensure_vite(repo_root: &Path) -> Option<Child> {
         })
         .ok()?;
 
+    let mut server = DevServer::new(child);
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         if port_open(DEV_PORT) {
             tracing::info!("vite ready on {DEV_PORT}");
-            return Some(child);
+            return Some(server);
         }
-        std::thread::sleep(Duration::from_millis(100));
+        if let Ok(Some(status)) = server.child.try_wait() {
+            eprintln!("vite exited before becoming ready: {status}");
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 
     eprintln!("vite did not become ready on port {DEV_PORT} within 30s");
-    Some(child)
+    Some(server)
 }
 
 fn port_open(port: u16) -> bool {
-    TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-        Duration::from_millis(150),
-    )
-    .is_ok()
+    let addrs = [
+        SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+        SocketAddr::from((Ipv6Addr::LOCALHOST, port)),
+    ];
+    addrs.iter().any(|addr| {
+        TcpStream::connect_timeout(addr, Duration::from_millis(100)).is_ok()
+    })
+}
+
+fn shutdown_dev_server() {
+    let pid = DEV_SERVER_PID.swap(0, Ordering::SeqCst);
+    if pid != 0 {
+        kill_process_tree(pid);
+    }
+}
+
+fn kill_process_tree(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("kill")
+            .args(["-TERM", &format!("-{pid}")])
+            .status();
+        let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+    }
 }
 
 fn data_dir() -> PathBuf {

@@ -68,6 +68,11 @@ interface AppState {
   setIsAddBookmarkOpen: (open: boolean) => void;
   isSettingsOpen: boolean;
   setIsSettingsOpen: (open: boolean) => void;
+  /// Native guest webviews sit above the React tree; depth > 0 hides them
+  /// so modal overlays in the primary UI are visible.
+  guestOcclusionDepth: number;
+  pushGuestOcclusion: () => void;
+  popGuestOcclusion: () => void;
 
   // Init
   initializeData: () => Promise<void>;
@@ -182,6 +187,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   setIsAddBookmarkOpen: (open) => set({ isAddBookmarkOpen: open }),
   isSettingsOpen: false,
   setIsSettingsOpen: (open) => set({ isSettingsOpen: open }),
+  guestOcclusionDepth: 0,
+  pushGuestOcclusion: () =>
+    set((state) => ({ guestOcclusionDepth: state.guestOcclusionDepth + 1 })),
+  popGuestOcclusion: () =>
+    set((state) => ({
+      guestOcclusionDepth: Math.max(0, state.guestOcclusionDepth - 1),
+    })),
 
   // Initialize data from electron
   initializeData: async () => {

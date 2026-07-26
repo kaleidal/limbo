@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAppStore } from "@/store/app-store";
+import { useOccludeGuest } from "@/hooks/use-occlude-guest";
 import { Sidebar } from "@/components/sidebar";
 import { TitleBar } from "@/components/title-bar";
 import { LibraryView } from "@/components/views/library-view";
@@ -20,7 +21,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { CloudDownload, FileArchive, HardDriveDownload } from "lucide-react";
 import type { BrowserDownloadRequest, Download } from "@/types/electron.d";
-import { useState } from "react";
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -58,6 +58,7 @@ export function App() {
   } = useAppStore();
   const [pendingBrowserDownload, setPendingBrowserDownload] = useState<BrowserDownloadRequest | null>(null);
   const [browserDownloadDebridSupported, setBrowserDownloadDebridSupported] = useState(false);
+  useOccludeGuest(!!pendingBrowserDownload);
 
   const isTorrentFileRequest =
     !!pendingBrowserDownload &&
@@ -266,11 +267,13 @@ export function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-neutral-950 text-neutral-100">
-      <TitleBar />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
-        <main className="flex-1 overflow-hidden">{renderView()}</main>
+    <>
+      <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
+        <TitleBar />
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <Sidebar />
+          <main className="flex-1 overflow-hidden">{renderView()}</main>
+        </div>
       </div>
       <AddBookmarkDialog />
       <ClipboardMonitor />
@@ -338,7 +341,7 @@ export function App() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 }
 
