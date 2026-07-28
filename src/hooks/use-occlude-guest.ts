@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/app-store";
 
-/** Hide native guest webviews while a React overlay is open (HWND airspace). */
+/** Let HTML overlays cover composition-hosted guests without hiding them. */
 export function useOccludeGuest(open: boolean) {
   const pushGuestOcclusion = useAppStore((state) => state.pushGuestOcclusion);
   const popGuestOcclusion = useAppStore((state) => state.popGuestOcclusion);

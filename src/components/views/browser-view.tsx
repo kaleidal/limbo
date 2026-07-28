@@ -167,9 +167,8 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   blockPopupsRef.current = blockPopups;
 
   useEffect(() => {
-    const id = guestIdRef.current;
-    if (!id || !guestReadyRef.current || !window.fenestra?.guest) return;
-    void window.fenestra.guest.setVisible(id, guestOcclusionDepth === 0).catch(() => undefined);
+    const covered = guestOcclusionDepth > 0;
+    void window.fenestra?.guest?.setCovered?.(covered).catch(() => undefined);
   }, [guestOcclusionDepth]);
 
   useLayoutEffect(() => {
@@ -252,7 +251,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
             width: Math.max(1, Math.round(rect.width)),
             height: Math.max(1, Math.round(rect.height)),
           },
-          visible: useAppStore.getState().guestOcclusionDepth === 0,
+          visible: true,
           backgroundColor: "#0a0a0a",
         });
         // StrictMode / remount: a newer effect owns the slot — leave its guest alone.
@@ -260,8 +259,8 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
         guestIdRef.current = guestId;
         guestReadyRef.current = true;
         await syncBounds();
-        const showGuest = useAppStore.getState().guestOcclusionDepth === 0;
-        await guestApi.setVisible(guestId, showGuest).catch(() => undefined);
+        const covered = useAppStore.getState().guestOcclusionDepth > 0;
+        await guestApi.setCovered?.(covered).catch(() => undefined);
         setError(null);
       } catch (createError) {
         if (guestEpochRef.current === epoch) {
