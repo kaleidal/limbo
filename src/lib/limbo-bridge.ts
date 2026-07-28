@@ -20,6 +20,7 @@ declare global {
         setBounds: (id: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
         setVisible: (id: string, visible: boolean) => Promise<void>;
         setCovered: (covered: boolean) => Promise<void>;
+        capturePreview: (id: string) => Promise<{ dataUrl: string }>;
         focus: (id: string) => Promise<void>;
         reload: (id: string) => Promise<void>;
         goBack: (id: string) => Promise<void>;

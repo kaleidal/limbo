@@ -268,11 +268,19 @@ export function App() {
 
   return (
     <>
-      <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
+      <div className="flex h-screen flex-col bg-transparent text-neutral-100">
         <TitleBar />
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <Sidebar />
-          <main className="flex-1 overflow-hidden">{renderView()}</main>
+          <main
+            className={
+              currentView === "browser"
+                ? "flex-1 overflow-hidden bg-transparent"
+                : "flex-1 overflow-hidden bg-neutral-950"
+            }
+          >
+            {renderView()}
+          </main>
         </div>
       </div>
       <AddBookmarkDialog />

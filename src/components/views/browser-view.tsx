@@ -23,7 +23,7 @@ export function BrowserView() {
 
   if (!activeBookmark) {
     return (
-      <div className="h-full flex items-center justify-center text-neutral-500">
+      <div className="flex h-full items-center justify-center bg-neutral-950 text-neutral-500">
         <p>Select a site from the sidebar to browse</p>
       </div>
     );
@@ -68,8 +68,8 @@ function BrowserChrome({
   children: React.ReactNode;
 }) {
   return (
-    <div className="h-full flex flex-col bg-neutral-950">
-      <div className="flex items-center gap-2 p-2 bg-neutral-900 border-b border-neutral-800">
+    <div className="flex h-full flex-col bg-transparent">
+      <div className="flex items-center gap-2 border-b border-neutral-800 bg-neutral-900 p-2">
         <button
           onClick={onGoBack}
           disabled={!canGoBack}
@@ -163,12 +163,37 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   const [isSecure, setIsSecure] = useState(startUrl.startsWith("https://"));
   const [blockPopups, setBlockPopups] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [coverBackdrop, setCoverBackdrop] = useState<string | null>(null);
 
   blockPopupsRef.current = blockPopups;
 
   useEffect(() => {
-    const covered = guestOcclusionDepth > 0;
-    void window.fenestra?.guest?.setCovered?.(covered).catch(() => undefined);
+    let cancelled = false;
+    void (async () => {
+      if (guestOcclusionDepth <= 0) {
+        setCoverBackdrop(null);
+        await window.fenestra?.guest?.setCovered?.(false).catch(() => undefined);
+        return;
+      }
+      const id = guestIdRef.current;
+      const guestApi = window.fenestra?.guest;
+      if (id && guestApi?.capturePreview) {
+        try {
+          const result = (await guestApi.capturePreview(id)) as { dataUrl?: string };
+          if (!cancelled && result?.dataUrl) {
+            setCoverBackdrop(result.dataUrl);
+          }
+        } catch {
+          // Still cover so the modal is usable even if the snapshot fails.
+        }
+      }
+      if (!cancelled) {
+        await guestApi?.setCovered?.(true).catch(() => undefined);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [guestOcclusionDepth]);
 
   useLayoutEffect(() => {
@@ -259,8 +284,21 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
         guestIdRef.current = guestId;
         guestReadyRef.current = true;
         await syncBounds();
-        const covered = useAppStore.getState().guestOcclusionDepth > 0;
-        await guestApi.setCovered?.(covered).catch(() => undefined);
+        if (useAppStore.getState().guestOcclusionDepth > 0) {
+          try {
+            const result = (await guestApi.capturePreview?.(guestId)) as
+              | { dataUrl?: string }
+              | undefined;
+            if (guestEpochRef.current === epoch && result?.dataUrl) {
+              setCoverBackdrop(result.dataUrl);
+            }
+          } catch {
+            // Cover anyway.
+          }
+          await guestApi.setCovered?.(true).catch(() => undefined);
+        } else {
+          await guestApi.setCovered?.(false).catch(() => undefined);
+        }
         setError(null);
       } catch (createError) {
         if (guestEpochRef.current === epoch) {
@@ -340,7 +378,16 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
         }
       }}
     >
-      <div ref={hostRef} className="min-h-0 w-full flex-1 bg-neutral-950" />
+      <div ref={hostRef} className="relative min-h-0 w-full flex-1 bg-transparent">
+        {coverBackdrop ? (
+          <img
+            src={coverBackdrop}
+            alt=""
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+            draggable={false}
+          />
+        ) : null}
+      </div>
     </BrowserChrome>
   );
 }

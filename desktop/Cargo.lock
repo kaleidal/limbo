@@ -923,7 +923,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1046,7 +1046,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1075,11 +1075,10 @@ dependencies = [
 
 [[package]]
 name = "event-listener"
-version = "5.4.1"
+version = "5.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
+checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
 dependencies = [
- "concurrent-queue",
  "parking",
  "pin-project-lite",
 ]
@@ -1118,7 +1117,7 @@ dependencies = [
 [[package]]
 name = "fenestra-bridge"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#ddd45814bfe7b1f4b2c125534255ff9c909a19d8"
+source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#1bcb6affbbcbe2bbf5788b8b10e00f9ce1239d29"
 dependencies = [
  "serde",
  "serde_json",
@@ -1128,7 +1127,7 @@ dependencies = [
 [[package]]
 name = "fenestra-cef"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#ddd45814bfe7b1f4b2c125534255ff9c909a19d8"
+source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#1bcb6affbbcbe2bbf5788b8b10e00f9ce1239d29"
 dependencies = [
  "ashpd",
  "bytemuck",
@@ -1157,7 +1156,7 @@ dependencies = [
 [[package]]
 name = "fenestra-platform"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#ddd45814bfe7b1f4b2c125534255ff9c909a19d8"
+source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#1bcb6affbbcbe2bbf5788b8b10e00f9ce1239d29"
 dependencies = [
  "libc",
  "raw-window-handle",
@@ -1167,7 +1166,7 @@ dependencies = [
 [[package]]
 name = "fenestra-runtime"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#ddd45814bfe7b1f4b2c125534255ff9c909a19d8"
+source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#1bcb6affbbcbe2bbf5788b8b10e00f9ce1239d29"
 dependencies = [
  "serde",
  "serde_json",
@@ -1177,7 +1176,7 @@ dependencies = [
 [[package]]
 name = "fenestra-webview2"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#ddd45814bfe7b1f4b2c125534255ff9c909a19d8"
+source = "git+https://github.com/Misoworks/Fenestra.git?branch=main#1bcb6affbbcbe2bbf5788b8b10e00f9ce1239d29"
 dependencies = [
  "fenestra-bridge",
  "fenestra-platform",
@@ -2950,7 +2949,7 @@ dependencies = [
  "once_cell",
  "png",
  "thiserror 2.0.19",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3062,7 +3061,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3735,7 +3734,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4166,7 +4165,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4223,7 +4222,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4288,9 +4287,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
+checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
 dependencies = [
  "dyn-clone",
  "ref-cast",
@@ -4457,7 +4456,7 @@ dependencies = [
  "indexmap 1.9.3",
  "indexmap 2.14.0",
  "schemars 0.9.0",
- "schemars 1.2.1",
+ "schemars 1.2.2",
  "serde_core",
  "serde_json",
  "serde_with_macros",
@@ -4621,7 +4620,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4779,7 +4778,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5088,9 +5087,9 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.1.2+spec-1.1.0"
+version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526"
+checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
 dependencies = [
  "winnow 1.0.4",
 ]
@@ -5220,9 +5219,9 @@ dependencies = [
 
 [[package]]
 name = "tray-icon"
-version = "0.24.1"
+version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65ba1e5f6b9ef9fd87e21b9c6f351554dbd717960089168fcfdef854686961dc"
+checksum = "045979e3f037cd18ad1cb2a419dfda133c5c29c9f3453370079f2255d46c257e"
 dependencies = [
  "crossbeam-channel",
  "dirs",
@@ -5236,7 +5235,7 @@ dependencies = [
  "once_cell",
  "png",
  "thiserror 2.0.19",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5274,7 +5273,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5925,7 +5924,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
