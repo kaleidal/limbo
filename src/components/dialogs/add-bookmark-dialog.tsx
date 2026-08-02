@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAppStore } from "@/store/app-store";
+import { useOccludeGuest } from "@/hooks/use-occlude-guest";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,6 +8,7 @@ import { X, Globe, Loader2 } from "lucide-react";
 
 export function AddBookmarkDialog() {
   const { isAddBookmarkOpen, setIsAddBookmarkOpen, addBookmark } = useAppStore();
+  const guestOcclusionReady = useOccludeGuest(isAddBookmarkOpen);
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -69,7 +71,7 @@ export function AddBookmarkDialog() {
     setIsAddBookmarkOpen(false);
   };
 
-  if (!isAddBookmarkOpen) return null;
+  if (!isAddBookmarkOpen || !guestOcclusionReady) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

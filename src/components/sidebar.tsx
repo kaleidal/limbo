@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAppStore } from "@/store/app-store";
+import { useOccludeGuest } from "@/hooks/use-occlude-guest";
 import {
   Library,
   Download,
@@ -23,6 +24,7 @@ export function Sidebar() {
     activeBookmark,
     setActiveBookmark,
     setIsAddBookmarkOpen,
+    primeGuestOcclusion,
     downloads,
     torrents,
   } = useAppStore();
@@ -31,6 +33,7 @@ export function Sidebar() {
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | null>(null);
   const [editUrl, setEditUrl] = useState("");
   const [editName, setEditName] = useState("");
+  const guestOcclusionReady = useOccludeGuest(!!editingBookmark);
 
   const handleEditBookmark = (bookmark: Bookmark) => {
     setEditingBookmark(bookmark);
@@ -73,7 +76,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="w-16 bg-neutral-900 border-r border-neutral-800 flex flex-col items-center py-4 gap-2 overflow-hidden">
+    <aside className="app-drag flex w-16 flex-col items-center gap-2 overflow-hidden border-r border-neutral-800 bg-neutral-900 py-4">
       {/* Main navigation */}
       <NavButton
         icon={<Library className="w-5 h-5" />}
@@ -109,25 +112,28 @@ export function Sidebar() {
         tooltip="Downloads"
       />
 
-      <div className="w-8 h-px bg-neutral-700 my-2" />
+      <div className="my-2 h-px w-8 bg-neutral-700" />
 
       {/* Bookmarks */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden w-full flex flex-col items-center gap-2 px-2 pt-1 scrollbar-none">
+      <div className="scrollbar-none flex w-full flex-1 flex-col items-center gap-2 overflow-x-hidden overflow-y-auto px-2 pt-1">
         {bookmarks.map((bookmark) => (
           <div
             key={bookmark.id}
-            className="relative flex-shrink-0"
+            className="app-no-drag relative flex-shrink-0"
             onMouseEnter={() => setHoveredBookmark(bookmark.id)}
             onMouseLeave={() => setHoveredBookmark(null)}
           >
             <button
               onClick={() => setActiveBookmark(bookmark)}
+              onPointerDown={(event) => {
+                if (event.button === 2) primeGuestOcclusion();
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 handleEditBookmark(bookmark);
               }}
               className={cn(
-                "w-12 h-12 rounded-lg flex items-center justify-center transition-all overflow-hidden",
+                "flex h-12 w-12 items-center justify-center overflow-hidden rounded-lg transition-all",
                 activeBookmark?.id === bookmark.id
                   ? "bg-lime-500/20 ring-2 ring-lime-500"
                   : "bg-neutral-800 hover:bg-neutral-700"
@@ -138,7 +144,7 @@ export function Sidebar() {
                 <img
                   src={bookmark.favicon}
                   alt={bookmark.name}
-                  className="w-6 h-6 object-contain"
+                  className="h-6 w-6 object-contain"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = "none";
                     (e.target as HTMLImageElement).nextElementSibling?.classList.remove("hidden");
@@ -146,15 +152,15 @@ export function Sidebar() {
                 />
               ) : null}
               <Globe
-                className={cn("w-5 h-5 text-neutral-400", bookmark.favicon && "hidden")}
+                className={cn("h-5 w-5 text-neutral-400", bookmark.favicon && "hidden")}
               />
             </button>
             {hoveredBookmark === bookmark.id && (
               <button
                 onClick={(e) => handleRemoveBookmark(e, bookmark.id)}
-                className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
+                className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 transition-colors hover:bg-red-600"
               >
-                <Trash2 className="w-3 h-3" />
+                <Trash2 className="h-3 w-3" />
               </button>
             )}
           </div>
@@ -163,14 +169,17 @@ export function Sidebar() {
         {/* Add bookmark button */}
         <button
           onClick={() => setIsAddBookmarkOpen(true)}
-          className="w-12 h-12 rounded-lg border-2 border-dashed border-neutral-700 flex items-center justify-center hover:border-lime-500 hover:text-lime-500 transition-colors text-neutral-500"
+          onPointerEnter={primeGuestOcclusion}
+          onPointerDown={primeGuestOcclusion}
+          onFocus={primeGuestOcclusion}
+          className="app-no-drag flex h-12 w-12 items-center justify-center rounded-lg border-2 border-dashed border-neutral-700 text-neutral-500 transition-colors hover:border-lime-500 hover:text-lime-500"
         >
-          <Plus className="w-5 h-5" />
+          <Plus className="h-5 w-5" />
         </button>
       </div>
 
       {/* Settings */}
-      <div className="w-8 h-px bg-neutral-700 my-2" />
+      <div className="my-2 h-px w-8 bg-neutral-700" />
       <NavButton
         icon={<Settings className="w-5 h-5" />}
         isActive={currentView === "settings"}
@@ -182,16 +191,16 @@ export function Sidebar() {
       />
 
       {/* Edit Bookmark Modal */}
-      {editingBookmark && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setEditingBookmark(null)}>
-          <div className="bg-neutral-900 rounded-lg border border-neutral-800 p-6 w-96" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
+      {editingBookmark && guestOcclusionReady && (
+        <div className="app-no-drag fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setEditingBookmark(null)}>
+          <div className="w-96 rounded-lg border border-neutral-800 bg-neutral-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold">Edit Bookmark</h3>
               <button
                 onClick={() => setEditingBookmark(null)}
-                className="p-1 hover:bg-neutral-800 rounded transition-colors"
+                className="rounded p-1 transition-colors hover:bg-neutral-800"
               >
-                <X className="w-5 h-5" />
+                <X className="h-5 w-5" />
               </button>
             </div>
             <div className="space-y-4">
@@ -201,7 +210,7 @@ export function Sidebar() {
                   id="edit-name"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="mt-1 bg-neutral-800 border-neutral-700"
+                  className="mt-1 border-neutral-700 bg-neutral-800"
                 />
               </div>
               <div>
@@ -210,11 +219,11 @@ export function Sidebar() {
                   id="edit-url"
                   value={editUrl}
                   onChange={(e) => setEditUrl(e.target.value)}
-                  className="mt-1 bg-neutral-800 border-neutral-700"
+                  className="mt-1 border-neutral-700 bg-neutral-800"
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-2 mt-6">
+            <div className="mt-6 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setEditingBookmark(null)}>
                 Cancel
               </Button>
@@ -244,10 +253,10 @@ function NavButton({
     <button
       onClick={onClick}
       className={cn(
-        "w-12 h-12 rounded-lg flex items-center justify-center transition-all",
+        "app-no-drag flex h-12 w-12 items-center justify-center rounded-lg transition-all",
         isActive
           ? "bg-lime-500 text-neutral-900"
-          : "bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200"
+          : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200"
       )}
       title={tooltip}
     >

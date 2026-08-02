@@ -1,6 +1,6 @@
 # Limbo
 
-Limbo is a desktop software manager built with Electron, React, and TypeScript. It combines a browser, direct download manager, torrent client, Debrid integration, extraction pipeline, and library view into one app.
+Limbo is a desktop software manager with an integrated browser, download manager, torrent client, Debrid integration, extraction pipeline, and library view. The UI is React + TypeScript. The desktop host is **Fenestra** (Rust).
 
 ![Limbo preview](./preview.png)
 
@@ -16,14 +16,11 @@ Limbo is a desktop software manager built with Electron, React, and TypeScript. 
 
 ## Tech Stack
 
-- Electron
-- Vite
-- React 19
-- TypeScript
+- [Fenestra](https://github.com/Misoworks/Fenestra) (WebView2 on Windows, CEF on Linux)
+- librqbit for torrents
+- Vite + React 19 + TypeScript
 - Tailwind CSS
 - Base UI / shadcn-style components
-- WebTorrent
-- electron-store
 
 ## Legal Notice
 
@@ -35,48 +32,43 @@ Users are solely responsible for ensuring they have the legal right to access, d
 
 ### Prerequisites
 
-- Node.js
-- npm
+- [Bun](https://bun.sh)
+- Rust (stable, 1.89+)
+- WebView2 Runtime on Windows
 
 ### Install
 
 ```bash
-npm install
+bun install
 ```
 
-### Run In Development
+### Run
 
 ```bash
-npm run dev:electron
+bun run dev:desktop
 ```
 
-This starts the Vite renderer and launches Electron against the local dev server.
+This runs the Rust host from `desktop/`. In debug builds it starts Vite (`bun run dev` on port 5177) and loads the UI in Fenestra.
+
+To run only the Vite UI in a browser:
+
+```bash
+bun run dev
+```
 
 ## Build
 
-### Build Renderer + Electron Bundles
+### Build Renderer
 
 ```bash
-npm run build
+bun run build
 ```
 
-### Build Installers
+### Build Desktop Host
 
 ```bash
-npm run build:electron
+bun run build:desktop
 ```
-
-Packaged builds are created with `electron-builder`.
-
-## Auto Updates
-
-Auto updates are handled with `electron-updater` and the `build.publish` configuration in `package.json`.
-
-Notes:
-
-- Auto update checks only run in packaged builds
-- Development mode does not perform update checks
-- Release distribution is configured for GitHub Releases
 
 ## Companion API
 
@@ -86,11 +78,9 @@ Limbo exposes a localhost HTTP API so other apps (for example Raffi) can add mag
 - Add torrent: `POST /v1/torrents` with `{ "magnet": "...", "fileIndex": 0, "sequential": true, "clientId": "raffi" }` and `Authorization: Bearer <token>`
 - Status: `GET /v1/torrents/:id`
 - Stream: `GET /v1/stream/:infoHash/:fileIndex?token=<token>` (Range requests supported)
-- Discovery file: `%APPDATA%/limbo/api.json` (or Limbo userData) contains `{ port, token, baseUrl }`
+- Discovery file under Limbo’s app data directory contains `{ port, token, baseUrl }`
 
 Toggle the API under Settings → Torrent Settings → Companion API.
-
-When an app adds a torrent, Limbo shows a system-wide approval prompt. Identity is resolved from the **localhost TCP peer** (process path + OS icon via Electron `getFileIcon`), not from fields the client sends. Self-reported names/icons are shown only as claims if they disagree. “Always allow” trusts that executable path.
 
 ## Associations
 
@@ -98,18 +88,6 @@ Packaged builds register support for:
 
 - `magnet:` links
 - `.torrent` files
-
-## Troubleshooting
-
-### Torrent Support
-
-If Limbo’s API is up but torrents fail with `torrent engine is not ready`, or the log shows `Cannot find module ... node_datachannel.node`, the WebTorrent native binary is missing (common after `bun install`, which can skip install scripts).
-
-```bash
-bun run rebuild:native
-```
-
-That rebuilds Electron-ABI modules (`bufferutil`, `utf-8-validate`, `utp-native`) and ensures the `node-datachannel` N-API prebuild is present. Restart Limbo afterward.
 
 ## License
 

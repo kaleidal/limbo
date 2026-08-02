@@ -121,13 +121,21 @@
     @apply border-border outline-ring/50;
     }
   body {
-    @apply font-sans bg-background text-foreground;
+    @apply font-sans bg-transparent text-foreground;
     overflow: hidden;
     user-select: none;
     }
   html {
-    @apply font-sans;
+    @apply font-sans bg-transparent;
     }
+  .app-drag {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
 
   /* Custom scrollbar */
   ::-webkit-scrollbar {

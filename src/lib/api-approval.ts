@@ -28,31 +28,16 @@ export type ApiApprovalBridge = {
 };
 
 export function getApprovalBridge(): ApiApprovalBridge | null {
-  if (typeof window === "undefined") return null;
-  const requireFn = (
-    window as Window & {
-      require?: (id: string) => { ipcRenderer: ApiApprovalIpc };
-    }
-  ).require;
-  if (!requireFn) return null;
-  try {
-    const { ipcRenderer } = requireFn("electron");
-    return {
-      getRequest: (requestId) =>
-        ipcRenderer.invoke("limbo-api-approval-get", requestId) as Promise<ApiApprovalRequest | null>,
-      decide: (payload) => {
-        ipcRenderer.send("limbo-api-approval-decision", payload);
-      },
-    };
-  } catch {
-    return null;
-  }
+  const fenestra = window.fenestra;
+  if (!fenestra?.bridge) return null;
+  return {
+    getRequest: (requestId) =>
+      fenestra.bridge.invoke("limbo.apiApprovalGet", { requestId }) as Promise<ApiApprovalRequest | null>,
+    decide: (payload) => {
+      void fenestra.bridge.invoke("limbo.apiApprovalDecision", payload);
+    },
+  };
 }
-
-type ApiApprovalIpc = {
-  invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
-  send: (channel: string, ...args: unknown[]) => void;
-};
 
 export function approvalRequestIdFromUrl(): string | null {
   try {
