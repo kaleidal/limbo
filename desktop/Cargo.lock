@@ -1117,7 +1117,7 @@ dependencies = [
 [[package]]
 name = "fenestra-bridge"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git#5029d34d062eb32aca56531db08b95dfcbb51692"
+source = "git+https://github.com/Misoworks/Fenestra.git#0408ef0bf8b46a4b3ffc5bd56dddb4d70de20568"
 dependencies = [
  "serde",
  "serde_json",
@@ -1127,7 +1127,7 @@ dependencies = [
 [[package]]
 name = "fenestra-cef"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git#5029d34d062eb32aca56531db08b95dfcbb51692"
+source = "git+https://github.com/Misoworks/Fenestra.git#0408ef0bf8b46a4b3ffc5bd56dddb4d70de20568"
 dependencies = [
  "ashpd",
  "bytemuck",
@@ -1156,7 +1156,7 @@ dependencies = [
 [[package]]
 name = "fenestra-platform"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git#5029d34d062eb32aca56531db08b95dfcbb51692"
+source = "git+https://github.com/Misoworks/Fenestra.git#0408ef0bf8b46a4b3ffc5bd56dddb4d70de20568"
 dependencies = [
  "libc",
  "raw-window-handle",
@@ -1166,7 +1166,7 @@ dependencies = [
 [[package]]
 name = "fenestra-runtime"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git#5029d34d062eb32aca56531db08b95dfcbb51692"
+source = "git+https://github.com/Misoworks/Fenestra.git#0408ef0bf8b46a4b3ffc5bd56dddb4d70de20568"
 dependencies = [
  "serde",
  "serde_json",
@@ -1176,7 +1176,7 @@ dependencies = [
 [[package]]
 name = "fenestra-webview2"
 version = "0.1.0"
-source = "git+https://github.com/Misoworks/Fenestra.git#5029d34d062eb32aca56531db08b95dfcbb51692"
+source = "git+https://github.com/Misoworks/Fenestra.git#0408ef0bf8b46a4b3ffc5bd56dddb4d70de20568"
 dependencies = [
  "fenestra-bridge",
  "fenestra-platform",

@@ -171,7 +171,6 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     let cancelled = false;
     void (async () => {
       if (guestOcclusionDepth <= 0) {
-        setCoverBackdrop(null);
         await window.fenestra?.guest?.setCovered?.(false).catch(() => undefined);
         return;
       }
@@ -182,6 +181,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
           const result = (await guestApi.capturePreview(id)) as { dataUrl?: string };
           if (!cancelled && result?.dataUrl) {
             setCoverBackdrop(result.dataUrl);
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
           }
         } catch {
           // Still cover so the modal is usable even if the snapshot fails.
