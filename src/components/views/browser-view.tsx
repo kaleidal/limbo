@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useLayoutEffect } from "react";
+import { useCallback, useRef, useState, useEffect, useLayoutEffect } from "react";
 import { useAppStore } from "@/store/app-store";
 import {
   ArrowLeft,
@@ -153,6 +153,8 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     getBrowserSessionUrl,
     rememberBrowserSession,
     guestOcclusionDepth,
+    guestOcclusionEpoch,
+    guestOcclusionPrimeEpoch,
     completeGuestOcclusion,
   } = useAppStore();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -169,8 +171,43 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   const [blockPopups, setBlockPopups] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [coverBackdrop, setCoverBackdrop] = useState<string | null>(null);
+  const previewRef = useRef<{ id: string; dataUrl: string; capturedAt: number } | null>(null);
+  const previewRequestRef = useRef<{ id: string; promise: Promise<string | null> } | null>(null);
 
   blockPopupsRef.current = blockPopups;
+
+  const captureGuestPreview = useCallback((id: string) => {
+    const recent = previewRef.current;
+    if (recent?.id === id && performance.now() - recent.capturedAt < 250) {
+      return Promise.resolve(recent.dataUrl);
+    }
+    if (previewRequestRef.current?.id === id) {
+      return previewRequestRef.current.promise;
+    }
+    const promise = (async () => {
+      const result = (await window.fenestra?.guest?.capturePreview?.(id)) as
+        | { dataUrl?: string }
+        | undefined;
+      if (!result?.dataUrl || guestIdRef.current !== id || !guestReadyRef.current) {
+        return null;
+      }
+      setCoverBackdrop(result.dataUrl);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      previewRef.current = { id, dataUrl: result.dataUrl, capturedAt: performance.now() };
+      return result.dataUrl;
+    })().catch(() => null);
+    previewRequestRef.current = { id, promise };
+    void promise.finally(() => {
+      if (previewRequestRef.current?.promise === promise) previewRequestRef.current = null;
+    });
+    return promise;
+  }, []);
+
+  useEffect(() => {
+    if (guestOcclusionPrimeEpoch <= 0) return;
+    const id = guestReadyRef.current ? guestIdRef.current : null;
+    if (id) void captureGuestPreview(id);
+  }, [captureGuestPreview, guestOcclusionPrimeEpoch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -181,17 +218,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       }
       const id = guestIdRef.current;
       const guestApi = window.fenestra?.guest;
-      if (id && guestApi?.capturePreview) {
-        try {
-          const result = (await guestApi.capturePreview(id)) as { dataUrl?: string };
-          if (!cancelled && result?.dataUrl) {
-            setCoverBackdrop(result.dataUrl);
-            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-          }
-        } catch {
-          // Still cover so the modal is usable even if the snapshot fails.
-        }
-      }
+      if (id) await captureGuestPreview(id);
       if (!cancelled) {
         await guestApi?.setCovered?.(true).catch(() => undefined);
         if (!cancelled) completeGuestOcclusion();
@@ -200,7 +227,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     return () => {
       cancelled = true;
     };
-  }, [completeGuestOcclusion, guestOcclusionDepth]);
+  }, [captureGuestPreview, completeGuestOcclusion, guestOcclusionDepth, guestOcclusionEpoch]);
 
   useLayoutEffect(() => {
     const guestApi = window.fenestra?.guest;
@@ -291,16 +318,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
         guestReadyRef.current = true;
         await syncBounds();
         if (useAppStore.getState().guestOcclusionDepth > 0) {
-          try {
-            const result = (await guestApi.capturePreview?.(guestId)) as
-              | { dataUrl?: string }
-              | undefined;
-            if (guestEpochRef.current === epoch && result?.dataUrl) {
-              setCoverBackdrop(result.dataUrl);
-            }
-          } catch {
-            // Cover anyway.
-          }
+          await captureGuestPreview(guestId);
           await guestApi.setCovered?.(true).catch(() => undefined);
           if (guestEpochRef.current === epoch) completeGuestOcclusion();
         } else {
@@ -321,6 +339,8 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       if (guestIdRef.current === guestId) {
         guestReadyRef.current = false;
         guestIdRef.current = null;
+        previewRef.current = null;
+        previewRequestRef.current = null;
       }
       resizeObserver.disconnect();
       window.removeEventListener("resize", syncBounds);
@@ -331,6 +351,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   }, [
     bookmark.id,
     bookmark.url,
+    captureGuestPreview,
     completeGuestOcclusion,
     getBrowserSessionUrl,
     rememberBrowserSession,

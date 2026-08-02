@@ -71,7 +71,10 @@ interface AppState {
   /// Native guest webviews sit above the React tree; depth > 0 hides them
   /// so modal overlays in the primary UI are visible.
   guestOcclusionDepth: number;
+  guestOcclusionEpoch: number;
+  guestOcclusionPrimeEpoch: number;
   guestOcclusionReady: boolean;
+  primeGuestOcclusion: () => void;
   pushGuestOcclusion: () => void;
   popGuestOcclusion: () => void;
   completeGuestOcclusion: () => void;
@@ -190,9 +193,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   isSettingsOpen: false,
   setIsSettingsOpen: (open) => set({ isSettingsOpen: open }),
   guestOcclusionDepth: 0,
+  guestOcclusionEpoch: 0,
+  guestOcclusionPrimeEpoch: 0,
+  primeGuestOcclusion: () =>
+    set((state) => ({ guestOcclusionPrimeEpoch: state.guestOcclusionPrimeEpoch + 1 })),
   pushGuestOcclusion: () =>
     set((state) => ({
       guestOcclusionDepth: state.guestOcclusionDepth + 1,
+      guestOcclusionEpoch:
+        state.guestOcclusionDepth === 0
+          ? state.guestOcclusionEpoch + 1
+          : state.guestOcclusionEpoch,
       guestOcclusionReady:
         state.guestOcclusionDepth > 0 ||
         state.currentView !== "browser" ||

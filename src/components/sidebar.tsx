@@ -24,6 +24,7 @@ export function Sidebar() {
     activeBookmark,
     setActiveBookmark,
     setIsAddBookmarkOpen,
+    primeGuestOcclusion,
     downloads,
     torrents,
   } = useAppStore();
@@ -124,6 +125,9 @@ export function Sidebar() {
           >
             <button
               onClick={() => setActiveBookmark(bookmark)}
+              onPointerDown={(event) => {
+                if (event.button === 2) primeGuestOcclusion();
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 handleEditBookmark(bookmark);
@@ -165,6 +169,9 @@ export function Sidebar() {
         {/* Add bookmark button */}
         <button
           onClick={() => setIsAddBookmarkOpen(true)}
+          onPointerEnter={primeGuestOcclusion}
+          onPointerDown={primeGuestOcclusion}
+          onFocus={primeGuestOcclusion}
           className="app-no-drag flex h-12 w-12 items-center justify-center rounded-lg border-2 border-dashed border-neutral-700 text-neutral-500 transition-colors hover:border-lime-500 hover:text-lime-500"
         >
           <Plus className="h-5 w-5" />
