@@ -22,7 +22,7 @@ axum = "0.8.9"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 ctrlc = "3.5.2"
 directories = "6.0.0"
-fenestra-cef = { git = "https://github.com/Misoworks/Fenestra.git", branch = "main" }
+fenestra-cef = { git = "https://github.com/Misoworks/Fenestra.git" }
 futures-util = "0.3.33"
 if-addrs = "0.15.0"
 librqbit = "8.1.1"

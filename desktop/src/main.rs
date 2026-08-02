@@ -97,14 +97,6 @@ fn main() {
         .lifecycle_policy(FenestraLifecyclePolicy::browser_tab())
         .runtime(fenestra_runtime);
 
-    // CEF OSR composites guests under the primary with alpha. Transparent
-    // chrome lets dialogs dim over live guest content. Windows uses HWND
-    // holes + capturePreview instead.
-    #[cfg(not(target_os = "windows"))]
-    {
-        window = window.transparent(true);
-    }
-
     let mut vite = None;
     if dev_mode || !dist_entry.exists() {
         vite = ensure_vite(&repo_root);
