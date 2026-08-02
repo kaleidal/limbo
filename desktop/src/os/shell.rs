@@ -1,4 +1,5 @@
 use std::path::Path;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::process::Command;
 
 #[derive(Debug, thiserror::Error)]
