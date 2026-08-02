@@ -149,7 +149,12 @@ function BrowserChrome({
 }
 
 function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
-  const { getBrowserSessionUrl, rememberBrowserSession, guestOcclusionDepth } = useAppStore();
+  const {
+    getBrowserSessionUrl,
+    rememberBrowserSession,
+    guestOcclusionDepth,
+    completeGuestOcclusion,
+  } = useAppStore();
   const hostRef = useRef<HTMLDivElement>(null);
   const guestIdRef = useRef<string | null>(null);
   const guestReadyRef = useRef(false);
@@ -189,12 +194,13 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       }
       if (!cancelled) {
         await guestApi?.setCovered?.(true).catch(() => undefined);
+        if (!cancelled) completeGuestOcclusion();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [guestOcclusionDepth]);
+  }, [completeGuestOcclusion, guestOcclusionDepth]);
 
   useLayoutEffect(() => {
     const guestApi = window.fenestra?.guest;
@@ -296,6 +302,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
             // Cover anyway.
           }
           await guestApi.setCovered?.(true).catch(() => undefined);
+          if (guestEpochRef.current === epoch) completeGuestOcclusion();
         } else {
           await guestApi.setCovered?.(false).catch(() => undefined);
         }
@@ -321,7 +328,13 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       unlistenLoading?.();
       void guestApi.destroy(guestId).catch(() => undefined);
     };
-  }, [bookmark.id, bookmark.url, getBrowserSessionUrl, rememberBrowserSession]);
+  }, [
+    bookmark.id,
+    bookmark.url,
+    completeGuestOcclusion,
+    getBrowserSessionUrl,
+    rememberBrowserSession,
+  ]);
 
   const guestId = () => (guestReadyRef.current ? guestIdRef.current : null);
 

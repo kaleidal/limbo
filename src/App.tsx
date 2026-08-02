@@ -58,7 +58,7 @@ export function App() {
   } = useAppStore();
   const [pendingBrowserDownload, setPendingBrowserDownload] = useState<BrowserDownloadRequest | null>(null);
   const [browserDownloadDebridSupported, setBrowserDownloadDebridSupported] = useState(false);
-  useOccludeGuest(!!pendingBrowserDownload);
+  const guestOcclusionReady = useOccludeGuest(!!pendingBrowserDownload);
 
   const isTorrentFileRequest =
     !!pendingBrowserDownload &&
@@ -286,7 +286,7 @@ export function App() {
       <AddBookmarkDialog />
       <ClipboardMonitor />
       <AlertDialog
-        open={!!pendingBrowserDownload}
+        open={!!pendingBrowserDownload && guestOcclusionReady}
         onOpenChange={(open) => {
           if (!open) {
             setPendingBrowserDownload(null);

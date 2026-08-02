@@ -32,7 +32,7 @@ export function Sidebar() {
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | null>(null);
   const [editUrl, setEditUrl] = useState("");
   const [editName, setEditName] = useState("");
-  useOccludeGuest(!!editingBookmark);
+  const guestOcclusionReady = useOccludeGuest(!!editingBookmark);
 
   const handleEditBookmark = (bookmark: Bookmark) => {
     setEditingBookmark(bookmark);
@@ -184,7 +184,7 @@ export function Sidebar() {
       />
 
       {/* Edit Bookmark Modal */}
-      {editingBookmark && (
+      {editingBookmark && guestOcclusionReady && (
         <div className="app-no-drag fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setEditingBookmark(null)}>
           <div className="w-96 rounded-lg border border-neutral-800 bg-neutral-900 p-6" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
