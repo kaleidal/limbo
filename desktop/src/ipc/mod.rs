@@ -7,10 +7,10 @@ mod torrents;
 
 use std::sync::Arc;
 
-use fenestra_cef::{
-    BridgeCommand, BridgeCommandDescriptor, BridgeError, BridgeResponse, BridgeResult, FenestraWindow,
+use sabine::{
+    BridgeCommand, BridgeCommandDescriptor, BridgeError, BridgeResponse, BridgeResult, SabineWindow,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::os;
 use crate::state::AppState;
@@ -28,17 +28,14 @@ pub(crate) fn err(message: impl Into<String>) -> BridgeResult {
 }
 
 pub(crate) fn param_str(params: &Value, key: &str) -> Option<String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
+    params.get(key).and_then(|v| v.as_str()).map(str::to_string)
 }
 
 pub(crate) fn param_bool(params: &Value, key: &str) -> Option<bool> {
     params.get(key).and_then(|v| v.as_bool())
 }
 
-pub(crate) fn register<F>(window: FenestraWindow, name: &str, app: App, handler: F) -> FenestraWindow
+pub(crate) fn register<F>(window: SabineWindow, name: &str, app: App, handler: F) -> SabineWindow
 where
     F: Fn(App, BridgeCommand) -> BridgeResult + Send + Sync + 'static,
 {
@@ -49,7 +46,7 @@ where
     )
 }
 
-pub fn attach(window: FenestraWindow, app: Arc<AppState>) -> FenestraWindow {
+pub fn attach(window: SabineWindow, app: Arc<AppState>) -> SabineWindow {
     let mut window = window;
     window = register(window, "limbo.drainEvents", app.clone(), |app, _| {
         let events = app.drain_events();

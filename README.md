@@ -1,6 +1,6 @@
 # Limbo
 
-Limbo is a desktop software manager with an integrated browser, download manager, torrent client, Debrid integration, extraction pipeline, and library view. The UI is React + TypeScript. The desktop host is **Fenestra** (Rust).
+Limbo is a desktop software manager with an integrated browser, download manager, torrent client, Debrid integration, and library view. The UI is React + TypeScript. The desktop host is **Sabine** (Rust).
 
 ![Limbo preview](./preview.png)
 
@@ -10,13 +10,12 @@ Limbo is a desktop software manager with an integrated browser, download manager
 - Torrent downloads from magnet links and `.torrent` files
 - Real-Debrid, AllDebrid, Premiumize, and TorBox support for supported flows
 - Embedded browser with bookmarks, popup blocking, and short-lived session memory
-- Automatic archive extraction after download
 - Local library for downloaded software, media, archives, and other files
 - Magnet and `.torrent` file association support in packaged builds
 
 ## Tech Stack
 
-- [Fenestra](https://github.com/Misoworks/Fenestra) (WebView2 on Windows, CEF on Linux)
+- [Sabine](https://github.com/Lantharos/Sabine) with a shared Chromium runtime
 - librqbit for torrents
 - Vite + React 19 + TypeScript
 - Tailwind CSS
@@ -34,7 +33,13 @@ Users are solely responsible for ensuring they have the legal right to access, d
 
 - [Bun](https://bun.sh)
 - Rust (stable, 1.89+)
-- WebView2 Runtime on Windows
+- Sabine CLI
+
+Install the latest Sabine tools:
+
+```bash
+cargo install --git https://github.com/Lantharos/Sabine sabine-cli
+```
 
 ### Install
 
@@ -48,7 +53,7 @@ bun install
 bun run dev:desktop
 ```
 
-This runs the Rust host from `desktop/`. In debug builds it starts Vite (`bun run dev` on port 5177) and loads the UI in Fenestra.
+This lets Sabine own the Vite process on port 5177, prepares the shared Chromium runtime when needed, and runs the Rust host from `desktop/`.
 
 To run only the Vite UI in a browser:
 
@@ -69,6 +74,14 @@ bun run build
 ```bash
 bun run build:desktop
 ```
+
+### Bundle Desktop App
+
+```bash
+bun run bundle:desktop
+```
+
+Pass `--target portable`, `--target deb`, `--target msi`, or `--target dmg` directly to `sabine bundle` when you need a specific package format.
 
 ## Companion API
 

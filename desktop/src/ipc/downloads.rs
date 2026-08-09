@@ -1,9 +1,9 @@
-use fenestra_cef::{BridgeError, FenestraWindow};
+use sabine::{BridgeError, SabineWindow};
 use serde_json::json;
 
-use super::{err, ok, param_bool, param_str, register, App};
+use super::{App, err, ok, param_bool, param_str, register};
 
-pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
+pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
     window = register(window, "limbo.getDownloads", app.clone(), |app, _| {
         ok(app.download_manager.list(&app))
     });
@@ -19,7 +19,10 @@ pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
         let mut warning = None;
 
         if use_debrid {
-            match app.runtime.block_on(app.debrid.unrestrict_link(&app, &final_url)) {
+            match app
+                .runtime
+                .block_on(app.debrid.unrestrict_link(&app, &final_url))
+            {
                 Ok(result) => {
                     if let Some(resolved) = result.url {
                         final_url = resolved;
@@ -77,10 +80,15 @@ pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
         app.download_manager.cancel_all(&app);
         ok(app.download_manager.list(&app))
     });
-    window = register(window, "limbo.clearCompletedDownloads", app.clone(), |app, _| {
-        app.download_manager.clear_completed(&app);
-        ok(app.download_manager.list(&app))
-    });
+    window = register(
+        window,
+        "limbo.clearCompletedDownloads",
+        app.clone(),
+        |app, _| {
+            app.download_manager.clear_completed(&app);
+            ok(app.download_manager.list(&app))
+        },
+    );
     window = register(window, "limbo.pauseAllDownloads", app.clone(), |app, _| {
         app.download_manager.pause_all(&app);
         ok(json!({ "success": true }))

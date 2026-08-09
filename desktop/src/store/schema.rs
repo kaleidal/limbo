@@ -117,7 +117,6 @@ impl Default for DebridSettings {
 pub struct Settings {
     pub download_path: String,
     pub max_concurrent_downloads: u32,
-    pub hardware_acceleration: bool,
     pub enable_seeding: bool,
     pub start_on_boot: bool,
     pub require_vpn: bool,
@@ -129,10 +128,6 @@ pub struct Settings {
     pub api_port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_token: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_prompt_policy: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trusted_api_clients: Option<Vec<String>>,
     pub debrid: DebridSettings,
 }
 
@@ -150,7 +145,6 @@ impl Default for Settings {
         Self {
             download_path: default_download_path(),
             max_concurrent_downloads: 3,
-            hardware_acceleration: true,
             enable_seeding: false,
             start_on_boot: false,
             require_vpn: false,
@@ -159,8 +153,6 @@ impl Default for Settings {
             api_enabled: Some(true),
             api_port: Some(DEFAULT_API_PORT),
             api_token: Some(String::new()),
-            api_prompt_policy: Some("always".to_string()),
-            trusted_api_clients: Some(Vec::new()),
             debrid: DebridSettings::default(),
         }
     }

@@ -1,13 +1,13 @@
-use fenestra_cef::{BridgeError, FenestraWindow};
+use sabine::{BridgeError, SabineWindow};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::os;
 use crate::store::schema::{Bookmark, StoreData};
 
-use super::{err, ok, param_str, register, App};
+use super::{App, err, ok, param_str, register};
 
-pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
+pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
     window = register(window, "limbo.getBookmarks", app.clone(), |app, _| {
         ok(app.store.with(|d| d.bookmarks.clone()))
     });
@@ -61,7 +61,8 @@ pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
             return ok(Value::Null);
         };
         let bookmarks = app.store.with(|d| d.bookmarks.clone());
-        let json = serde_json::to_string_pretty(&bookmarks).map_err(|e| BridgeError::new(e.to_string()))?;
+        let json = serde_json::to_string_pretty(&bookmarks)
+            .map_err(|e| BridgeError::new(e.to_string()))?;
         std::fs::write(&path, json).map_err(|e| BridgeError::new(e.to_string()))?;
         ok(path.to_string_lossy().to_string())
     });

@@ -13,7 +13,6 @@ import {
   RefreshCw,
   Globe,
   RotateCcw,
-  Monitor,
   Share2,
   Power,
   Trash2,
@@ -386,59 +385,6 @@ export function SettingsView() {
                     Default http://127.0.0.1:17890/v1. Auth token is written to Limbo&apos;s api.json.
                   </p>
                 </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">Ask before adding torrents</p>
-                    <p className="text-sm text-neutral-500">
-                      Show a system prompt when apps request torrents.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={localSettings.apiPromptPolicy !== "off"}
-                    onCheckedChange={(checked: boolean) =>
-                      setLocalSettings({
-                        ...localSettings,
-                        apiPromptPolicy: checked ? "always" : "off",
-                      })
-                    }
-                  />
-                </div>
-                {(localSettings.trustedApiClients?.length ?? 0) > 0 && (
-                  <div>
-                    <p className="font-medium mb-2">Trusted apps</p>
-                    <div className="space-y-2">
-                      {localSettings.trustedApiClients?.map((clientId) => (
-                        <div
-                          key={clientId}
-                          className="flex items-center justify-between gap-3 text-sm text-neutral-300"
-                        >
-                          <span className="font-mono text-xs break-all">
-                            {clientId.startsWith("exe:")
-                              ? clientId.slice(4)
-                              : clientId}
-                          </span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setLocalSettings({
-                                ...localSettings,
-                                trustedApiClients: (localSettings.trustedApiClients || []).filter(
-                                  (id) => id !== clientId
-                                ),
-                              })
-                            }
-                          >
-                            Revoke
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-xs text-neutral-500 mt-2">
-                      Trust is tied to the verified executable path, not a self-reported app name.
-                    </p>
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -780,36 +726,6 @@ export function SettingsView() {
           </div>
         </section>
 
-        {/* Performance Settings */}
-        <section className="mb-8">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Monitor className="w-5 h-5" />
-            Performance
-          </h2>
-          <div className="space-y-4 bg-neutral-900 rounded-lg p-4 border border-neutral-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Hardware Acceleration</p>
-                <p className="text-sm text-neutral-500">
-                  Use GPU for rendering. Disable if you see visual artifacts or lines on screen.
-                </p>
-              </div>
-              <Switch
-                checked={localSettings.hardwareAcceleration}
-                onCheckedChange={(checked: boolean) =>
-                  setLocalSettings({
-                    ...localSettings,
-                    hardwareAcceleration: checked,
-                  })
-                }
-              />
-            </div>
-            <p className="text-xs text-amber-500">
-              Warning: Requires app restart to take effect
-            </p>
-          </div>
-        </section>
-
         {/* Startup Settings */}
         <section className="mb-8">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -821,7 +737,7 @@ export function SettingsView() {
               <div>
                 <p className="font-medium">Start on Boot</p>
                 <p className="text-sm text-neutral-500">
-                  Automatically launch Limbo when your computer starts.
+                  Automatically launch Limbo when your computer starts. Applied on the next launch.
                 </p>
               </div>
               <Switch

@@ -1,21 +1,3 @@
-// Electron webview element type
-export interface ElectronWebviewElement extends HTMLElement {
-  src: string;
-  partition: string;
-  canGoBack(): boolean;
-  canGoForward(): boolean;
-  goBack(): void;
-  goForward(): void;
-  reload(): void;
-  stop(): void;
-  loadURL(url: string): Promise<void>;
-  getURL(): string;
-  getTitle(): string;
-  isLoading(): boolean;
-  addEventListener(event: string, callback: (e: Event) => void): void;
-  removeEventListener(event: string, callback: (e: Event) => void): void;
-}
-
 export interface Bookmark {
   id: string;
   name: string;
@@ -55,14 +37,11 @@ export interface DownloadProgress {
   total: number;
   status: string;
   speed?: number;
-  extractProgress?: number;
-  extractStatus?: string;
 }
 
 export interface Settings {
   downloadPath: string;
   maxConcurrentDownloads: number;
-  hardwareAcceleration: boolean;
   enableSeeding: boolean;
   startOnBoot: boolean;
   requireVpn: boolean;
@@ -71,8 +50,6 @@ export interface Settings {
   apiEnabled?: boolean;
   apiPort?: number;
   apiToken?: string;
-  apiPromptPolicy?: "always" | "off";
-  trustedApiClients?: string[];
   debrid: {
     service: "realdebrid" | "alldebrid" | "premiumize" | "torbox" | null;
     apiKey: string;
@@ -212,30 +189,10 @@ export interface LimboAPI {
   onClipboardDownloadDetected: (callback: (urls: string[]) => void) => () => void;
   onMagnetLinkOpened: (callback: (magnetUri: string) => void) => () => void;
   onTorrentFileOpened: (callback: (filePath: string) => void) => () => void;
-  onExtractionProgress: (
-    callback: (data: {
-      downloadId: string;
-      status: string;
-      percent?: number;
-      message?: string;
-      error?: string;
-    }) => void
-  ) => () => void;
   onBrowserDownloadRequested: (callback: (request: BrowserDownloadRequest) => void) => () => void;
 }
 
 declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      webview: React.DetailedHTMLProps<React.HTMLAttributes<ElectronWebviewElement>, ElectronWebviewElement> & {
-        src?: string;
-        partition?: string;
-        allowpopups?: string;
-        webpreferences?: string;
-      };
-    }
-  }
-
   interface Window {
     limbo: LimboAPI;
   }

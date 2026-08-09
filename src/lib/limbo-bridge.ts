@@ -1,48 +1,5 @@
 type ListenerMap = Map<string, Set<(payload: unknown) => void>>;
 
-declare global {
-  interface Window {
-    fenestra?: {
-      window: {
-        minimize: () => void;
-        maximize: () => void;
-        toggleMaximize?: () => void;
-        close: () => void;
-      };
-      bridge: {
-        invoke: (name: string, params?: unknown) => Promise<unknown>;
-        listen: (name: string, callback: (payload: unknown) => void) => () => void;
-      };
-      guest?: {
-        create: (options: Record<string, unknown>) => Promise<{ id: string }>;
-        destroy: (id: string) => Promise<void>;
-        navigate: (id: string, url: string) => Promise<void>;
-        setBounds: (id: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
-        setVisible: (id: string, visible: boolean) => Promise<void>;
-        setCovered: (covered: boolean) => Promise<void>;
-        capturePreview: (id: string) => Promise<{ dataUrl: string }>;
-        focus: (id: string) => Promise<void>;
-        reload: (id: string) => Promise<void>;
-        goBack: (id: string) => Promise<void>;
-        goForward: (id: string) => Promise<void>;
-        get: (id: string) => Promise<{
-          id: string;
-          url?: string;
-          title?: string;
-          canGoBack?: boolean;
-          canGoForward?: boolean;
-          isLoading?: boolean;
-        } | null>;
-        downloadAction: (
-          downloadId: string,
-          action: string,
-          options?: Record<string, unknown>
-        ) => Promise<void>;
-      };
-    };
-  }
-}
-
 const listeners: ListenerMap = new Map();
 let pollTimer: number | null = null;
 
@@ -63,19 +20,32 @@ function emitLocal(name: string, payload: unknown) {
   }
 }
 
-async function invoke<T>(name: string, params: Record<string, unknown> = {}): Promise<T> {
-  const fenestra = window.fenestra;
-  if (!fenestra?.bridge) {
-    throw new Error("Fenestra bridge unavailable");
+function emitLaunchArguments(payload: unknown) {
+  const data = payload as { arguments?: unknown };
+  if (!Array.isArray(data.arguments)) return;
+  window.sabine?.window.focus();
+  for (const argument of data.arguments) {
+    if (typeof argument !== "string") continue;
+    if (argument.startsWith("magnet:")) {
+      emitLocal("magnet-link-opened", argument);
+    } else if (argument.toLowerCase().endsWith(".torrent")) {
+      emitLocal("torrent-file-opened", argument);
+    }
   }
-  return (await fenestra.bridge.invoke(name, params)) as T;
+}
+
+async function invoke<T>(name: string, params: Record<string, unknown> = {}): Promise<T> {
+  const sabine = window.sabine;
+  if (!sabine?.bridge.__native) {
+    throw new Error("Sabine bridge unavailable");
+  }
+  return (await sabine.bridge.invoke(name, params)) as T;
 }
 
 function subscribe(name: string, callback: (payload: unknown) => void) {
   ensureListener(name).add(callback);
   startEventPolling();
-  const fenestra = window.fenestra;
-  const unlistenNative = fenestra?.bridge.listen(name, callback);
+  const unlistenNative = window.sabine?.bridge.listen(name, callback);
   return () => {
     ensureListener(name).delete(callback);
     unlistenNative?.();
@@ -83,7 +53,7 @@ function subscribe(name: string, callback: (payload: unknown) => void) {
 }
 
 function startEventPolling() {
-  if (pollTimer !== null || !window.fenestra?.bridge) return;
+  if (pollTimer !== null || !window.sabine?.bridge.__native) return;
   pollTimer = window.setInterval(async () => {
     try {
       const events = await invoke<Array<{ name: string; payload: unknown }>>("limbo.drainEvents");
@@ -97,22 +67,34 @@ function startEventPolling() {
 }
 
 export function installLimboBridge() {
-  if (window.limbo || !window.fenestra?.bridge) {
+  if (window.limbo || !window.sabine?.bridge.__native) {
     return Boolean(window.limbo);
   }
 
-  window.fenestra.bridge.listen("guest.download", (payload) => {
-    const data = payload as { url?: string; filename?: string; suggestedFilename?: string };
+  window.sabine.bridge.listen("guest.download", (payload) => {
+    const data = payload as {
+      downloadId?: string;
+      state?: string;
+      url?: string;
+      filename?: string;
+    };
+    if (data.state !== "requested") return;
+    if (data.downloadId) {
+      void window.sabine?.guest
+        ?.downloadAction(data.downloadId, "cancel")
+        .catch(() => undefined);
+    }
     emitLocal("browser-download-requested", {
       url: data.url ?? "",
-      filename: data.filename ?? data.suggestedFilename ?? "download",
+      filename: data.filename ?? "download",
     });
   });
+  window.sabine.bridge.listen("singleInstance.activate", emitLaunchArguments);
 
   window.limbo = {
-    minimize: () => window.fenestra?.window.minimize(),
-    maximize: () => window.fenestra?.window.toggleMaximize?.() ?? window.fenestra?.window.maximize(),
-    close: () => window.fenestra?.window.close(),
+    minimize: () => window.sabine?.window.minimize(),
+    maximize: () => window.sabine?.window.toggleMaximize(),
+    close: () => window.sabine?.window.close(),
     openExternal: (url) => invoke("limbo.openExternal", { url }),
 
     getBookmarks: () => invoke("limbo.getBookmarks"),
@@ -183,15 +165,10 @@ export function installLimboBridge() {
       subscribe("clipboard-download-detected", callback as (payload: unknown) => void),
     onMagnetLinkOpened: (callback) => subscribe("magnet-link-opened", callback as (payload: unknown) => void),
     onTorrentFileOpened: (callback) => subscribe("torrent-file-opened", callback as (payload: unknown) => void),
-    onExtractionProgress: (callback) => subscribe("extraction-progress", callback as (payload: unknown) => void),
     onBrowserDownloadRequested: (callback) =>
       subscribe("browser-download-requested", callback as (payload: unknown) => void),
   };
 
   startEventPolling();
   return true;
-}
-
-export function isFenestraRuntime() {
-  return Boolean(window.fenestra?.bridge);
 }

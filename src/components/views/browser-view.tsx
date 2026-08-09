@@ -12,7 +12,7 @@ import {
   Popcorn,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import type { Bookmark } from "@/types/electron.d";
+import type { Bookmark } from "@/types/desktop.d";
 
 export function BrowserView() {
   const { activeBookmark, clearExpiredBrowserSessions } = useAppStore();
@@ -185,7 +185,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       return previewRequestRef.current.promise;
     }
     const promise = (async () => {
-      const result = (await window.fenestra?.guest?.capturePreview?.(id)) as
+      const result = (await window.sabine?.guest?.capturePreview(id)) as
         | { dataUrl?: string }
         | undefined;
       if (!result?.dataUrl || guestIdRef.current !== id || !guestReadyRef.current) {
@@ -213,11 +213,11 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     let cancelled = false;
     void (async () => {
       if (guestOcclusionDepth <= 0) {
-        await window.fenestra?.guest?.setCovered?.(false).catch(() => undefined);
+        await window.sabine?.guest?.setCovered(false).catch(() => undefined);
         return;
       }
       const id = guestIdRef.current;
-      const guestApi = window.fenestra?.guest;
+      const guestApi = window.sabine?.guest;
       if (id) await captureGuestPreview(id);
       if (!cancelled) {
         await guestApi?.setCovered?.(true).catch(() => undefined);
@@ -230,7 +230,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   }, [captureGuestPreview, completeGuestOcclusion, guestOcclusionDepth, guestOcclusionEpoch]);
 
   useLayoutEffect(() => {
-    const guestApi = window.fenestra?.guest;
+    const guestApi = window.sabine?.guest;
     const host = hostRef.current;
     if (!guestApi || !host) {
       setError("Guest browser unavailable");
@@ -266,7 +266,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     resizeObserver.observe(host);
     window.addEventListener("resize", syncBounds);
 
-    const unlistenNavigated = window.fenestra?.bridge.listen("guest.navigated", (payload) => {
+    const unlistenNavigated = window.sabine?.bridge.listen("guest.navigated", (payload) => {
       const data = payload as {
         id?: string;
         url?: string;
@@ -289,10 +289,10 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       setError(null);
     });
 
-    const unlistenLoading = window.fenestra?.bridge.listen("guest.loading", (payload) => {
-      const data = payload as { id?: string; isLoading?: boolean };
+    const unlistenLoading = window.sabine?.bridge.listen("guest.loading", (payload) => {
+      const data = payload as { id?: string; loading?: boolean };
       if (!isCurrent() || data.id !== guestId) return;
-      setIsLoading(Boolean(data.isLoading));
+      setIsLoading(Boolean(data.loading));
     });
 
     void (async () => {
@@ -362,12 +362,12 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   const handleUrlSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     const id = guestId();
-    if (!id || !window.fenestra?.guest) return;
+    if (!id || !window.sabine?.guest) return;
     let nextUrl = currentUrl.trim();
     if (!nextUrl.startsWith("http://") && !nextUrl.startsWith("https://")) {
       nextUrl = `https://${nextUrl}`;
     }
-    void window.fenestra.guest.navigate(id, nextUrl).catch(() => undefined);
+    void window.sabine.guest.navigate(id, nextUrl).catch(() => undefined);
     setCurrentUrl(nextUrl);
     setIsSecure(nextUrl.startsWith("https://"));
     rememberBrowserSession(bookmark.id, nextUrl);
@@ -386,20 +386,20 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       error={error}
       onGoBack={() => {
         const id = guestId();
-        if (id) void window.fenestra?.guest?.goBack(id).catch(() => undefined);
+        if (id) void window.sabine?.guest?.goBack(id).catch(() => undefined);
       }}
       onGoForward={() => {
         const id = guestId();
-        if (id) void window.fenestra?.guest?.goForward(id).catch(() => undefined);
+        if (id) void window.sabine?.guest?.goForward(id).catch(() => undefined);
       }}
       onReload={() => {
         const id = guestId();
-        if (id) void window.fenestra?.guest?.reload(id).catch(() => undefined);
+        if (id) void window.sabine?.guest?.reload(id).catch(() => undefined);
       }}
       onHome={() => {
         const id = guestId();
-        if (!id || !window.fenestra?.guest) return;
-        void window.fenestra.guest.navigate(id, bookmark.url).catch(() => undefined);
+        if (!id || !window.sabine?.guest) return;
+        void window.sabine.guest.navigate(id, bookmark.url).catch(() => undefined);
         setCurrentUrl(bookmark.url);
         setIsSecure(bookmark.url.startsWith("https://"));
         rememberBrowserSession(bookmark.id, bookmark.url);

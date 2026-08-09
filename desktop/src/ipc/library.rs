@@ -1,13 +1,13 @@
-use fenestra_cef::{BridgeError, FenestraWindow};
-use serde_json::{json, Value};
+use sabine::{BridgeError, SabineWindow};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::os;
 use crate::store::schema::LibraryItem;
 
-use super::{err, ok, param_bool, param_str, register, App};
+use super::{App, err, ok, param_bool, param_str, register};
 
-pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
+pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
     window = register(window, "limbo.getLibrary", app.clone(), |app, _| {
         ok(app.store.with(|d| d.library.clone()))
     });
@@ -30,37 +30,50 @@ pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
         );
         ok(item)
     });
-    window = register(window, "limbo.removeFromLibrary", app.clone(), |app, cmd| {
-        let Some(id) = param_str(&cmd.params, "id") else {
-            return err("id required");
-        };
-        let delete_files = param_bool(&cmd.params, "deleteFiles").unwrap_or(false);
-        let path = app
-            .store
-            .with(|d| d.library.iter().find(|i| i.id == id).map(|i| i.path.clone()));
-        if delete_files {
-            if let Some(path) = path {
-                let _ = std::fs::remove_file(&path);
-                let _ = std::fs::remove_dir_all(&path);
+    window = register(
+        window,
+        "limbo.removeFromLibrary",
+        app.clone(),
+        |app, cmd| {
+            let Some(id) = param_str(&cmd.params, "id") else {
+                return err("id required");
+            };
+            let delete_files = param_bool(&cmd.params, "deleteFiles").unwrap_or(false);
+            let path = app.store.with(|d| {
+                d.library
+                    .iter()
+                    .find(|i| i.id == id)
+                    .map(|i| i.path.clone())
+            });
+            if delete_files {
+                if let Some(path) = path {
+                    let _ = std::fs::remove_file(&path);
+                    let _ = std::fs::remove_dir_all(&path);
+                }
             }
-        }
-        app.store
-            .with_mut(|d| d.library.retain(|i| i.id != id))
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        let library = app.store.with(|d| d.library.clone());
-        app.push_event(
-            "library-updated",
-            serde_json::to_value(&library).unwrap_or_default(),
-        );
-        ok(library)
-    });
-    window = register(window, "limbo.openFileLocation", app.clone(), |_app, cmd| {
-        let Some(path) = param_str(&cmd.params, "path") else {
-            return err("path required");
-        };
-        os::shell::show_in_folder(&path).map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(json!({ "success": true }))
-    });
+            app.store
+                .with_mut(|d| d.library.retain(|i| i.id != id))
+                .map_err(|e| BridgeError::new(e.to_string()))?;
+            let library = app.store.with(|d| d.library.clone());
+            app.push_event(
+                "library-updated",
+                serde_json::to_value(&library).unwrap_or_default(),
+            );
+            ok(library)
+        },
+    );
+    window = register(
+        window,
+        "limbo.openFileLocation",
+        app.clone(),
+        |_app, cmd| {
+            let Some(path) = param_str(&cmd.params, "path") else {
+                return err("path required");
+            };
+            os::shell::show_in_folder(&path).map_err(|e| BridgeError::new(e.to_string()))?;
+            ok(json!({ "success": true }))
+        },
+    );
     window = register(window, "limbo.openFile", app.clone(), |_app, cmd| {
         let Some(path) = param_str(&cmd.params, "path") else {
             return err("path required");

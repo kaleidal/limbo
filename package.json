@@ -12,11 +12,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "generate-icons": "npx tsx scripts/generate-icons.ts",
+    "generate-icons": "bunx tsx scripts/generate-icons.ts",
     "lint": "eslint .",
     "preview": "vite preview",
-    "dev:desktop": "cargo run --manifest-path desktop/Cargo.toml",
-    "build:desktop": "bun run build ; cargo build --manifest-path desktop/Cargo.toml --release"
+    "dev:desktop": "sabine dev .",
+    "build:desktop": "bun run build && cargo build --manifest-path desktop/Cargo.toml --release",
+    "bundle:desktop": "sabine bundle . --release"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

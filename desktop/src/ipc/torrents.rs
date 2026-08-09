@@ -1,11 +1,11 @@
-use fenestra_cef::{BridgeError, FenestraWindow};
-use serde_json::{json, Value};
+use sabine::{BridgeError, SabineWindow};
+use serde_json::{Value, json};
 
 use crate::os;
 
-use super::{err, ok, param_bool, param_str, register, App};
+use super::{App, err, ok, param_bool, param_str, register};
 
-pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
+pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
     window = register(window, "limbo.getTorrents", app.clone(), |app, _| {
         ok(app.torrent_engine.list(&app))
     });
@@ -49,7 +49,10 @@ pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
             })
             .map_err(|e: reqwest::Error| BridgeError::new(e.to_string()))?;
         app.runtime
-            .block_on(app.torrent_engine.add_file_bytes(app.clone(), bytes.to_vec(), None))
+            .block_on(
+                app.torrent_engine
+                    .add_file_bytes(app.clone(), bytes.to_vec(), None),
+            )
             .map_err(|e| BridgeError::new(e.to_string()))
             .and_then(ok)
     });
@@ -81,12 +84,18 @@ pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
             .map_err(|e| BridgeError::new(e.to_string()))?;
         ok(app.torrent_engine.list(&app))
     });
-    window = register(window, "limbo.isTorrentSupported", app.clone(), |_app, _| {
-        ok(true)
-    });
-    window = register(window, "limbo.getStreamServerPort", app.clone(), |app, _| {
-        ok(*app.stream_port.lock())
-    });
+    window = register(
+        window,
+        "limbo.isTorrentSupported",
+        app.clone(),
+        |_app, _| ok(true),
+    );
+    window = register(
+        window,
+        "limbo.getStreamServerPort",
+        app.clone(),
+        |app, _| ok(*app.stream_port.lock()),
+    );
     window = register(window, "limbo.getTorrentFiles", app.clone(), |app, cmd| {
         let Some(info_hash) = param_str(&cmd.params, "infoHash") else {
             return err("infoHash required");
@@ -125,14 +134,18 @@ pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
             .collect::<Vec<_>>())
     });
     window = register(window, "limbo.pauseAllTorrents", app.clone(), |app, _| {
-        let ids = app.store.with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
+        let ids = app
+            .store
+            .with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
         for id in ids {
             let _ = app.runtime.block_on(app.torrent_engine.pause(&id));
         }
         ok(json!({ "success": true }))
     });
     window = register(window, "limbo.resumeAllTorrents", app.clone(), |app, _| {
-        let ids = app.store.with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
+        let ids = app
+            .store
+            .with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
         for id in ids {
             let _ = app.runtime.block_on(app.torrent_engine.resume(&id));
         }

@@ -107,15 +107,19 @@ impl TorrentEngine {
 
         let response = session.add_torrent(add, Some(opts)).await?;
         let Some(handle) = response.into_handle() else {
-            return Err(TorrentError::Message("Torrent metadata could not be resolved".to_string()));
+            return Err(TorrentError::Message(
+                "Torrent metadata could not be resolved".to_string(),
+            ));
         };
 
         let limbo_id = Uuid::new_v4().to_string();
         self.id_map.lock().insert(limbo_id.clone(), handle.id());
 
-        let display_name = name
-            .clone()
-            .unwrap_or_else(|| handle.name().unwrap_or_else(|| "Untitled torrent".to_string()));
+        let display_name = name.clone().unwrap_or_else(|| {
+            handle
+                .name()
+                .unwrap_or_else(|| "Untitled torrent".to_string())
+        });
 
         let info = TorrentInfo {
             id: limbo_id.clone(),
@@ -143,7 +147,10 @@ impl TorrentEngine {
         };
 
         app.store.with_mut(|d| d.torrents.push(info.clone()))?;
-        app.push_event("torrent-added", serde_json::to_value(&info).unwrap_or_default());
+        app.push_event(
+            "torrent-added",
+            serde_json::to_value(&info).unwrap_or_default(),
+        );
         spawn_progress_watcher(app, limbo_id, handle);
         Ok(info)
     }
@@ -162,14 +169,21 @@ impl TorrentEngine {
         Ok(())
     }
 
-    pub async fn remove(&self, app: &AppState, id: &str, delete_files: bool) -> Result<(), TorrentError> {
+    pub async fn remove(
+        &self,
+        app: &AppState,
+        id: &str,
+        delete_files: bool,
+    ) -> Result<(), TorrentError> {
         let session = self.session()?;
         let rqbit_id = self
             .id_map
             .lock()
             .remove(id)
             .ok_or_else(|| TorrentError::NotFound(id.to_string()))?;
-        session.delete(TorrentIdOrHash::Id(rqbit_id), delete_files).await?;
+        session
+            .delete(TorrentIdOrHash::Id(rqbit_id), delete_files)
+            .await?;
         app.store.with_mut(|d| d.torrents.retain(|t| t.id != id))?;
         app.push_event("torrent-removed", serde_json::json!({ "id": id }));
         Ok(())
@@ -195,10 +209,17 @@ impl TorrentEngine {
     }
 
     fn session(&self) -> Result<Arc<Session>, TorrentError> {
-        self.session.lock().clone().ok_or(TorrentError::NotInitialized)
+        self.session
+            .lock()
+            .clone()
+            .ok_or(TorrentError::NotInitialized)
     }
 
-    fn handle_for(&self, session: &Arc<Session>, id: &str) -> Result<Arc<ManagedTorrent>, TorrentError> {
+    fn handle_for(
+        &self,
+        session: &Arc<Session>,
+        id: &str,
+    ) -> Result<Arc<ManagedTorrent>, TorrentError> {
         let rqbit_id = *self
             .id_map
             .lock()
@@ -264,9 +285,23 @@ fn spawn_progress_watcher(app: Arc<AppState>, limbo_id: String, handle: Arc<Mana
             let Some(info) = updated else {
                 break;
             };
-            app.push_event("torrent-progress", serde_json::to_value(&info).unwrap_or_default());
+            app.push_event(
+                "torrent-progress",
+                serde_json::to_value(&info).unwrap_or_default(),
+            );
 
-            if stats.finished || stats.error.is_some() {
+            if stats.finished {
+                app.push_event(
+                    "torrent-complete",
+                    serde_json::to_value(&info).unwrap_or_default(),
+                );
+                break;
+            }
+            if let Some(error) = stats.error {
+                app.push_event(
+                    "torrent-error",
+                    serde_json::json!({ "id": limbo_id, "error": error }),
+                );
                 break;
             }
         }

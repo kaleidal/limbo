@@ -27,7 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { TorrentInfo, Download as DownloadType } from "@/types/electron.d";
+import type { TorrentInfo, Download as DownloadType } from "@/types/desktop.d";
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);

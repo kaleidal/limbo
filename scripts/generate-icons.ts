@@ -33,12 +33,11 @@ async function generateIcons() {
     .toFile(path.join(publicDir, 'icon.png'));
   console.log('  Generated icon.png (512x512)');
 
-  // For Windows ICO, we need to use a different approach
-  // electron-builder can use a 256x256 PNG and convert it
+  // Sabine uses the PNG source to produce platform-specific package assets.
   console.log('\nFor Windows (.ico) and Mac (.icns):');
   console.log('  Option 1: Use https://icoconvert.com to convert icon.png to icon.ico');
   console.log('  Option 2: Use https://cloudconvert.com to convert icon.png to icon.icns');
-  console.log('  Option 3: electron-builder will auto-convert from icon.png if formats are missing\n');
+  console.log('  Sabine packaging can use icon.png directly when platform-specific files are missing\n');
 
   console.log('Icon generation complete!');
 }

@@ -5,7 +5,7 @@ import type {
   Download,
   Settings,
   TorrentInfo,
-} from "@/types/electron.d";
+} from "@/types/desktop.d";
 
 type ViewType = "library" | "downloads" | "settings" | "browser";
 type BrowserSession = {
@@ -220,7 +220,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   guestOcclusionReady: true,
   completeGuestOcclusion: () => set({ guestOcclusionReady: true }),
 
-  // Initialize data from electron
+  // Initialize data from the desktop host
   initializeData: async () => {
     if (window.limbo) {
       const [bookmarks, library, downloads, torrents, settings] = await Promise.all([

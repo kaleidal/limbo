@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { Bookmark } from "@/types/electron.d";
+import type { Bookmark } from "@/types/desktop.d";
 
 export function Sidebar() {
   const {

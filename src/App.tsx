@@ -20,7 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { CloudDownload, FileArchive, HardDriveDownload } from "lucide-react";
-import type { BrowserDownloadRequest, Download } from "@/types/electron.d";
+import type { BrowserDownloadRequest, Download } from "@/types/desktop.d";
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -134,8 +134,6 @@ export function App() {
           size: progress.total,
           status: isDownloadStatus(progress.status) ? progress.status : "error",
           speed: progress.speed,
-          extractProgress: progress.extractProgress,
-          extractStatus: progress.extractStatus,
         });
       });
 
@@ -190,46 +188,6 @@ export function App() {
         }
       });
 
-      const unsubExtraction = window.limbo.onExtractionProgress((data) => {
-        const id = data.downloadId;
-        if (!id) return;
-
-        if (data.status === "extracting") {
-          updateDownload(id, {
-            status: "extracting",
-            extractProgress: 0,
-            extractStatus: "Extracting...",
-          });
-          return;
-        }
-
-        if (data.status === "progress") {
-          updateDownload(id, {
-            status: "extracting",
-            extractProgress: typeof data.percent === "number" ? data.percent : 0,
-            extractStatus: data.message || "Extracting...",
-          });
-          return;
-        }
-
-        if (data.status === "done") {
-          updateDownload(id, {
-            status: "completed",
-            extractProgress: 100,
-            extractStatus: "Extracted",
-          });
-          return;
-        }
-
-        if (data.status === "error") {
-          updateDownload(id, {
-            status: "completed",
-            extractProgress: 100,
-            extractStatus: data.error ? `Extraction failed: ${data.error}` : "Extraction failed",
-          });
-        }
-      });
-
       const unsubBrowserDownload = window.limbo.onBrowserDownloadRequested((request) => {
         setPendingBrowserDownload(request);
       });
@@ -245,7 +203,6 @@ export function App() {
         unsubTorrentError();
         unsubTorrentRemoved();
         unsubTorrentFile();
-        unsubExtraction();
         unsubBrowserDownload();
       };
     }

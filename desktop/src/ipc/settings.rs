@@ -1,12 +1,12 @@
-use fenestra_cef::{BridgeError, FenestraWindow};
-use serde_json::{json, Value};
+use sabine::{BridgeError, SabineWindow};
+use serde_json::{Value, json};
 
 use crate::os;
 use crate::store::schema::{Settings, StoreData};
 
-use super::{ok, register, App};
+use super::{App, ok, register};
 
-pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
+pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
     window = register(window, "limbo.getSettings", app.clone(), |app, _| {
         ok(app.store.with(|d| d.settings.clone()))
     });
@@ -14,10 +14,9 @@ pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
         let patch = cmd.params;
         app.store
             .with_mut(|d| {
-                if let Ok(partial) = serde_json::from_value::<Settings>(merge_settings(
-                    &d.settings,
-                    &patch,
-                )) {
+                if let Ok(partial) =
+                    serde_json::from_value::<Settings>(merge_settings(&d.settings, &patch))
+                {
                     d.settings = partial;
                 }
             })
@@ -31,9 +30,13 @@ pub fn attach(mut window: FenestraWindow, app: App) -> FenestraWindow {
     });
     window = register(window, "limbo.clearData", app.clone(), |app, _| {
         app.download_manager.cancel_all(&app);
-        let ids = app.store.with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
+        let ids = app
+            .store
+            .with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
         for id in ids {
-            let _ = app.runtime.block_on(app.torrent_engine.remove(&app, &id, false));
+            let _ = app
+                .runtime
+                .block_on(app.torrent_engine.remove(&app, &id, false));
         }
         let defaults = StoreData::default();
         app.store
@@ -60,9 +63,10 @@ fn merge_settings(current: &Settings, patch: &Value) -> Value {
     if let (Some(obj), Some(patch_obj)) = (value.as_object_mut(), patch.as_object()) {
         for (key, patch_value) in patch_obj {
             if key == "debrid" {
-                if let (Some(debrid), Some(patch_debrid)) =
-                    (obj.get_mut("debrid").and_then(|v| v.as_object_mut()), patch_value.as_object())
-                {
+                if let (Some(debrid), Some(patch_debrid)) = (
+                    obj.get_mut("debrid").and_then(|v| v.as_object_mut()),
+                    patch_value.as_object(),
+                ) {
                     for (dkey, dval) in patch_debrid {
                         debrid.insert(dkey.clone(), dval.clone());
                     }
