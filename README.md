@@ -1,6 +1,6 @@
 # Limbo
 
-Limbo is a desktop software manager built with Electron, React, and TypeScript. It combines a browser, direct download manager, torrent client, Debrid integration, extraction pipeline, and library view into one app.
+Limbo is a desktop software manager with an integrated browser, download manager, torrent client, Debrid integration, and library view. The UI is React + TypeScript. The desktop host is **Sabine** (Rust).
 
 ![Limbo preview](./preview.png)
 
@@ -10,20 +10,16 @@ Limbo is a desktop software manager built with Electron, React, and TypeScript. 
 - Torrent downloads from magnet links and `.torrent` files
 - Real-Debrid, AllDebrid, Premiumize, and TorBox support for supported flows
 - Embedded browser with bookmarks, popup blocking, and short-lived session memory
-- Automatic archive extraction after download
 - Local library for downloaded software, media, archives, and other files
 - Magnet and `.torrent` file association support in packaged builds
 
 ## Tech Stack
 
-- Electron
-- Vite
-- React 19
-- TypeScript
+- [Sabine](https://github.com/Lantharos/Sabine) with a shared Chromium runtime
+- librqbit for torrents
+- Vite + React 19 + TypeScript
 - Tailwind CSS
 - Base UI / shadcn-style components
-- WebTorrent
-- electron-store
 
 ## Legal Notice
 
@@ -35,62 +31,70 @@ Users are solely responsible for ensuring they have the legal right to access, d
 
 ### Prerequisites
 
-- Node.js
-- npm
+- [Bun](https://bun.sh)
+- Rust (stable, 1.89+)
+- Sabine CLI
+
+Install the latest Sabine tools:
+
+```bash
+cargo install --git https://github.com/Lantharos/Sabine sabine-cli
+```
 
 ### Install
 
 ```bash
-npm install
+bun install
 ```
 
-### Run In Development
+### Run
 
 ```bash
-npm run dev:electron
+bun run dev:desktop
 ```
 
-This starts the Vite renderer and launches Electron against the local dev server.
+This lets Sabine own the Vite process on port 5177, prepares the shared Chromium runtime when needed, and runs the Rust host from `desktop/`.
+
+To run only the Vite UI in a browser:
+
+```bash
+bun run dev
+```
 
 ## Build
 
-### Build Renderer + Electron Bundles
+### Build Renderer
 
 ```bash
-npm run build
+bun run build
 ```
 
-### Build Installers
+### Build Desktop Host
 
 ```bash
-npm run build:electron
+bun run build:desktop
 ```
 
-Packaged builds are created with `electron-builder`.
+### Bundle Desktop App
 
-## Auto Updates
+```bash
+bun run bundle:desktop
+```
 
-Auto updates are handled with `electron-updater` and the `build.publish` configuration in `package.json`.
-
-Notes:
-
-- Auto update checks only run in packaged builds
-- Development mode does not perform update checks
-- Release distribution is configured for GitHub Releases
+Pass `--target portable`, `--target deb`, `--target msi`, or `--target dmg` directly to `sabine bundle` when you need a specific package format.
 
 ## Companion API
 
-Limbo exposes a localhost HTTP API so other apps (for example Raffi) can add magnets and stream files without embedding a torrent client.
+Limbo exposes an authenticated localhost HTTP API so companion apps can manage torrents without embedding a torrent client.
 
 - Health: `GET http://127.0.0.1:17890/v1/health`
-- Add torrent: `POST /v1/torrents` with `{ "magnet": "...", "fileIndex": 0, "sequential": true, "clientId": "raffi" }` and `Authorization: Bearer <token>`
-- Status: `GET /v1/torrents/:id`
-- Stream: `GET /v1/stream/:infoHash/:fileIndex?token=<token>` (Range requests supported)
-- Discovery file: `%APPDATA%/limbo/api.json` (or Limbo userData) contains `{ port, token, baseUrl }`
+- List torrents: `GET /v1/torrents` with `Authorization: Bearer <token>`
+- Add torrent: `POST /v1/torrents` with `{ "magnet": "..." }` and `Authorization: Bearer <token>`
+- Remove torrent: `DELETE /v1/torrents/:id` with `Authorization: Bearer <token>`
+- Progress events: `GET /v1/events` with `Authorization: Bearer <token>`
+- Discovery file under Limbo’s app data directory contains `{ port, token, baseUrl }`
 
-Toggle the API under Settings → Torrent Settings → Companion API.
-
-When an app adds a torrent, Limbo shows a system-wide approval prompt. Identity is resolved from the **localhost TCP peer** (process path + OS icon via Electron `getFileIcon`), not from fields the client sends. Self-reported names/icons are shown only as claims if they disagree. “Always allow” trusts that executable path.
+Toggle the API or rotate its access token under Settings → Torrent Settings → Companion API.
 
 ## Associations
 
@@ -98,18 +102,6 @@ Packaged builds register support for:
 
 - `magnet:` links
 - `.torrent` files
-
-## Troubleshooting
-
-### Torrent Support
-
-If Limbo’s API is up but torrents fail with `torrent engine is not ready`, or the log shows `Cannot find module ... node_datachannel.node`, the WebTorrent native binary is missing (common after `bun install`, which can skip install scripts).
-
-```bash
-bun run rebuild:native
-```
-
-That rebuilds Electron-ABI modules (`bufferutil`, `utf-8-validate`, `utp-native`) and ensures the `node-datachannel` N-API prebuild is present. Restart Limbo afterward.
 
 ## License
 

@@ -13,16 +13,16 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "dist",
+    outDir: "web-dist",
     emptyOutDir: true,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, "index.html"),
-        approval: path.resolve(__dirname, "approval.html"),
       },
     },
   },
   server: {
+    host: "localhost",
     port: 5177,
     strictPort: true,
   },

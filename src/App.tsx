@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAppStore } from "@/store/app-store";
+import { useOccludeGuest } from "@/hooks/use-occlude-guest";
 import { Sidebar } from "@/components/sidebar";
 import { TitleBar } from "@/components/title-bar";
 import { LibraryView } from "@/components/views/library-view";
@@ -19,8 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { CloudDownload, FileArchive, HardDriveDownload } from "lucide-react";
-import type { BrowserDownloadRequest, Download } from "@/types/electron.d";
-import { useState } from "react";
+import type { BrowserDownloadRequest, Download } from "@/types/desktop.d";
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -58,6 +58,7 @@ export function App() {
   } = useAppStore();
   const [pendingBrowserDownload, setPendingBrowserDownload] = useState<BrowserDownloadRequest | null>(null);
   const [browserDownloadDebridSupported, setBrowserDownloadDebridSupported] = useState(false);
+  const guestOcclusionReady = useOccludeGuest(!!pendingBrowserDownload);
 
   const isTorrentFileRequest =
     !!pendingBrowserDownload &&
@@ -133,8 +134,6 @@ export function App() {
           size: progress.total,
           status: isDownloadStatus(progress.status) ? progress.status : "error",
           speed: progress.speed,
-          extractProgress: progress.extractProgress,
-          extractStatus: progress.extractStatus,
         });
       });
 
@@ -189,46 +188,6 @@ export function App() {
         }
       });
 
-      const unsubExtraction = window.limbo.onExtractionProgress((data) => {
-        const id = data.downloadId;
-        if (!id) return;
-
-        if (data.status === "extracting") {
-          updateDownload(id, {
-            status: "extracting",
-            extractProgress: 0,
-            extractStatus: "Extracting...",
-          });
-          return;
-        }
-
-        if (data.status === "progress") {
-          updateDownload(id, {
-            status: "extracting",
-            extractProgress: typeof data.percent === "number" ? data.percent : 0,
-            extractStatus: data.message || "Extracting...",
-          });
-          return;
-        }
-
-        if (data.status === "done") {
-          updateDownload(id, {
-            status: "completed",
-            extractProgress: 100,
-            extractStatus: "Extracted",
-          });
-          return;
-        }
-
-        if (data.status === "error") {
-          updateDownload(id, {
-            status: "completed",
-            extractProgress: 100,
-            extractStatus: data.error ? `Extraction failed: ${data.error}` : "Extraction failed",
-          });
-        }
-      });
-
       const unsubBrowserDownload = window.limbo.onBrowserDownloadRequested((request) => {
         setPendingBrowserDownload(request);
       });
@@ -244,7 +203,6 @@ export function App() {
         unsubTorrentError();
         unsubTorrentRemoved();
         unsubTorrentFile();
-        unsubExtraction();
         unsubBrowserDownload();
       };
     }
@@ -266,16 +224,26 @@ export function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-neutral-950 text-neutral-100">
-      <TitleBar />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
-        <main className="flex-1 overflow-hidden">{renderView()}</main>
+    <>
+      <div className="flex h-screen flex-col bg-transparent text-neutral-100">
+        <TitleBar />
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <Sidebar />
+          <main
+            className={
+              currentView === "browser"
+                ? "flex-1 overflow-hidden bg-transparent"
+                : "flex-1 overflow-hidden bg-neutral-950"
+            }
+          >
+            {renderView()}
+          </main>
+        </div>
       </div>
       <AddBookmarkDialog />
       <ClipboardMonitor />
       <AlertDialog
-        open={!!pendingBrowserDownload}
+        open={!!pendingBrowserDownload && guestOcclusionReady}
         onOpenChange={(open) => {
           if (!open) {
             setPendingBrowserDownload(null);
@@ -338,7 +306,7 @@ export function App() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 }
 

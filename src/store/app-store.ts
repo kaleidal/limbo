@@ -5,7 +5,7 @@ import type {
   Download,
   Settings,
   TorrentInfo,
-} from "@/types/electron.d";
+} from "@/types/desktop.d";
 
 type ViewType = "library" | "downloads" | "settings" | "browser";
 type BrowserSession = {
@@ -68,6 +68,16 @@ interface AppState {
   setIsAddBookmarkOpen: (open: boolean) => void;
   isSettingsOpen: boolean;
   setIsSettingsOpen: (open: boolean) => void;
+  /// Native guest webviews sit above the React tree; depth > 0 hides them
+  /// so modal overlays in the primary UI are visible.
+  guestOcclusionDepth: number;
+  guestOcclusionEpoch: number;
+  guestOcclusionPrimeEpoch: number;
+  guestOcclusionReady: boolean;
+  primeGuestOcclusion: () => void;
+  pushGuestOcclusion: () => void;
+  popGuestOcclusion: () => void;
+  completeGuestOcclusion: () => void;
 
   // Init
   initializeData: () => Promise<void>;
@@ -182,8 +192,35 @@ export const useAppStore = create<AppState>((set, get) => ({
   setIsAddBookmarkOpen: (open) => set({ isAddBookmarkOpen: open }),
   isSettingsOpen: false,
   setIsSettingsOpen: (open) => set({ isSettingsOpen: open }),
+  guestOcclusionDepth: 0,
+  guestOcclusionEpoch: 0,
+  guestOcclusionPrimeEpoch: 0,
+  primeGuestOcclusion: () =>
+    set((state) => ({ guestOcclusionPrimeEpoch: state.guestOcclusionPrimeEpoch + 1 })),
+  pushGuestOcclusion: () =>
+    set((state) => ({
+      guestOcclusionDepth: state.guestOcclusionDepth + 1,
+      guestOcclusionEpoch:
+        state.guestOcclusionDepth === 0
+          ? state.guestOcclusionEpoch + 1
+          : state.guestOcclusionEpoch,
+      guestOcclusionReady:
+        state.guestOcclusionDepth > 0 ||
+        state.currentView !== "browser" ||
+        !state.activeBookmark,
+    })),
+  popGuestOcclusion: () =>
+    set((state) => {
+      const guestOcclusionDepth = Math.max(0, state.guestOcclusionDepth - 1);
+      return {
+        guestOcclusionDepth,
+        guestOcclusionReady: guestOcclusionDepth === 0 || state.guestOcclusionReady,
+      };
+    }),
+  guestOcclusionReady: true,
+  completeGuestOcclusion: () => set({ guestOcclusionReady: true }),
 
-  // Initialize data from electron
+  // Initialize data from the desktop host
   initializeData: async () => {
     if (window.limbo) {
       const [bookmarks, library, downloads, torrents, settings] = await Promise.all([

@@ -13,7 +13,6 @@ import {
   RefreshCw,
   Globe,
   RotateCcw,
-  Monitor,
   Share2,
   Power,
   Trash2,
@@ -30,6 +29,8 @@ export function SettingsView() {
   const [supportedHosts, setSupportedHosts] = useState<string[]>([]);
   const [hostsLoading, setHostsLoading] = useState(false);
   const [hostsError, setHostsError] = useState<string | null>(null);
+  const [rotatingApiToken, setRotatingApiToken] = useState(false);
+  const [apiTokenStatus, setApiTokenStatus] = useState<"rotated" | "error" | null>(null);
 
   const [rdDevice, setRdDevice] = useState<
     | null
@@ -143,6 +144,23 @@ export function SettingsView() {
       console.error("Failed to clear data:", err);
     } finally {
       setClearing(false);
+    }
+  };
+
+  const handleRotateApiToken = async () => {
+    if (!window.limbo || rotatingApiToken) return;
+    setRotatingApiToken(true);
+    setApiTokenStatus(null);
+    try {
+      await window.limbo.rotateApiToken();
+      const updated = await window.limbo.getSettings();
+      setSettings(updated);
+      setLocalSettings(updated);
+      setApiTokenStatus("rotated");
+    } catch {
+      setApiTokenStatus("error");
+    } finally {
+      setRotatingApiToken(false);
     }
   };
 
@@ -334,7 +352,8 @@ export function SettingsView() {
               <div>
                 <p className="font-medium">Require VPN for Torrents</p>
                 <p className="text-sm text-neutral-500">
-                  Block torrent downloads when no VPN is detected. Helps protect your privacy.
+                  Check interface names when adding a torrent. This is not a routing check or kill
+                  switch, and IPv6-only VPN interfaces may not be detected.
                 </p>
               </div>
               <Switch
@@ -349,9 +368,27 @@ export function SettingsView() {
             </div>
             <div className="flex items-center justify-between">
               <div>
+                <p className="font-medium">Monitor Clipboard</p>
+                <p className="text-sm text-neutral-500">
+                  Detect copied download and magnet links while Limbo is open.
+                </p>
+              </div>
+              <Switch
+                aria-label="Monitor Clipboard"
+                checked={localSettings.clipboardMonitoring}
+                onCheckedChange={(checked: boolean) =>
+                  setLocalSettings({
+                    ...localSettings,
+                    clipboardMonitoring: checked,
+                  })
+                }
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
                 <p className="font-medium">Companion API</p>
                 <p className="text-sm text-neutral-500">
-                  Let apps like Raffi request torrents and stream over localhost.
+                  Let companion apps manage Limbo torrents over localhost.
                 </p>
               </div>
               <Switch
@@ -386,59 +423,33 @@ export function SettingsView() {
                     Default http://127.0.0.1:17890/v1. Auth token is written to Limbo&apos;s api.json.
                   </p>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p className="font-medium">Ask before adding torrents</p>
+                    <p className="font-medium">API Token</p>
                     <p className="text-sm text-neutral-500">
-                      Show a system prompt when apps request torrents.
+                      Rotate the token to revoke access for existing companion clients.
                     </p>
+                    {apiTokenStatus === "rotated" && (
+                      <p className="text-sm text-emerald-400 mt-1">Token rotated.</p>
+                    )}
+                    {apiTokenStatus === "error" && (
+                      <p className="text-sm text-red-400 mt-1">Token rotation failed.</p>
+                    )}
                   </div>
-                  <Switch
-                    checked={localSettings.apiPromptPolicy !== "off"}
-                    onCheckedChange={(checked: boolean) =>
-                      setLocalSettings({
-                        ...localSettings,
-                        apiPromptPolicy: checked ? "always" : "off",
-                      })
-                    }
-                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleRotateApiToken}
+                    disabled={rotatingApiToken}
+                  >
+                    {rotatingApiToken ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    Rotate Token
+                  </Button>
                 </div>
-                {(localSettings.trustedApiClients?.length ?? 0) > 0 && (
-                  <div>
-                    <p className="font-medium mb-2">Trusted apps</p>
-                    <div className="space-y-2">
-                      {localSettings.trustedApiClients?.map((clientId) => (
-                        <div
-                          key={clientId}
-                          className="flex items-center justify-between gap-3 text-sm text-neutral-300"
-                        >
-                          <span className="font-mono text-xs break-all">
-                            {clientId.startsWith("exe:")
-                              ? clientId.slice(4)
-                              : clientId}
-                          </span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setLocalSettings({
-                                ...localSettings,
-                                trustedApiClients: (localSettings.trustedApiClients || []).filter(
-                                  (id) => id !== clientId
-                                ),
-                              })
-                            }
-                          >
-                            Revoke
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-xs text-neutral-500 mt-2">
-                      Trust is tied to the verified executable path, not a self-reported app name.
-                    </p>
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -780,36 +791,6 @@ export function SettingsView() {
           </div>
         </section>
 
-        {/* Performance Settings */}
-        <section className="mb-8">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Monitor className="w-5 h-5" />
-            Performance
-          </h2>
-          <div className="space-y-4 bg-neutral-900 rounded-lg p-4 border border-neutral-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Hardware Acceleration</p>
-                <p className="text-sm text-neutral-500">
-                  Use GPU for rendering. Disable if you see visual artifacts or lines on screen.
-                </p>
-              </div>
-              <Switch
-                checked={localSettings.hardwareAcceleration}
-                onCheckedChange={(checked: boolean) =>
-                  setLocalSettings({
-                    ...localSettings,
-                    hardwareAcceleration: checked,
-                  })
-                }
-              />
-            </div>
-            <p className="text-xs text-amber-500">
-              Warning: Requires app restart to take effect
-            </p>
-          </div>
-        </section>
-
         {/* Startup Settings */}
         <section className="mb-8">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -821,7 +802,7 @@ export function SettingsView() {
               <div>
                 <p className="font-medium">Start on Boot</p>
                 <p className="text-sm text-neutral-500">
-                  Automatically launch Limbo when your computer starts.
+                  Automatically launch Limbo when your computer starts. Applied on the next launch.
                 </p>
               </div>
               <Switch

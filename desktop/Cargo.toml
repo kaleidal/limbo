@@ -1,0 +1,43 @@
+[package]
+name = "limbo"
+version = "1.4.0"
+edition = "2024"
+authors = ["Kristof <kristof@lanth.me>"]
+description = "Limbo desktop host on Sabine"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "limbo"
+path = "src/main.rs"
+
+[lib]
+name = "limbo_desktop"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+arboard = "3.6.1"
+axum = "0.8.9"
+base64 = "0.22.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
+directories = "6.0.0"
+sabine = { git = "https://github.com/Lantharos/Sabine.git" }
+futures-util = "0.3.33"
+if-addrs = "0.15.0"
+librqbit = { version = "8.1.1", features = ["http-api", "tracing-subscriber-utils"] }
+open = "5.4.0"
+parking_lot = "0.12.5"
+rand = "0.9.2"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2", "json", "multipart", "stream", "charset", "query", "form"] }
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync", "net", "process"] }
+tokio-stream = "0.1.19"
+tower-http = { version = "0.7.0", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.24.0", features = ["v4", "serde"] }

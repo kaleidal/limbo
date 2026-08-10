@@ -1,0 +1,14 @@
+[app]
+id = "al.kaleid.limbo"
+name = "Limbo"
+version = "1.4.0"
+icon = "public/icon.png"
+cargo_manifest = "desktop/Cargo.toml"
+mime_types = ["x-scheme-handler/magnet", "application/x-bittorrent"]
+
+[web]
+root = "."
+dist = "web-dist"
+entry = "web-dist/index.html"
+dev_port = 5177
+build = "bun run build"
