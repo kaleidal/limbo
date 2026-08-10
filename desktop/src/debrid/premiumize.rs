@@ -4,10 +4,14 @@ use super::{DebridError, DebridResult};
 
 const BASE: &str = "https://www.premiumize.me/api";
 
-pub async fn unrestrict(client: &reqwest::Client, api_key: &str, url: &str) -> Result<DebridResult, DebridError> {
+pub async fn unrestrict(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> Result<DebridResult, DebridError> {
     let data: Value = client
         .post(format!("{BASE}/transfer/directdl"))
-        .query(&[("apikey", api_key)])
+        .bearer_auth(api_key)
         .form(&[("src", url)])
         .send()
         .await?
@@ -46,42 +50,76 @@ pub async fn convert_magnet(
         .json()
         .await?;
 
-    let Some(id) = created.get("id").and_then(Value::as_str).map(str::to_string) else {
-        return Ok(Vec::new());
-    };
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-    let list: Value = client
-        .get(format!("{BASE}/transfer/list"))
-        .query(&[("apikey", api_key)])
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let folder_id = list
-        .get("transfers")
-        .and_then(Value::as_array)
-        .and_then(|items| {
-            items
-                .iter()
-                .find(|item| item.get("id").and_then(Value::as_str) == Some(id.as_str()))
-        })
-        .and_then(|item| item.get("folder_id"))
+    let Some(id) = created
+        .get("id")
         .and_then(Value::as_str)
-        .map(str::to_string);
-
+        .map(str::to_string)
+    else {
+        return Err(DebridError::Message(format!(
+            "Premiumize: {}",
+            error_message(&created)
+        )));
+    };
+    let mut folder_id = None;
+    for _ in 0..24 {
+        let list: Value = client
+            .get(format!("{BASE}/transfer/list"))
+            .bearer_auth(api_key)
+            .send()
+            .await?
+            .json()
+            .await?;
+        let transfer = list
+            .get("transfers")
+            .and_then(Value::as_array)
+            .and_then(|items| {
+                items
+                    .iter()
+                    .find(|item| item.get("id").and_then(Value::as_str) == Some(id.as_str()))
+            });
+        match transfer
+            .and_then(|item| item.get("status"))
+            .and_then(Value::as_str)
+        {
+            Some("finished" | "seeding") => {
+                folder_id = transfer
+                    .and_then(|item| item.get("folder_id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                break;
+            }
+            Some("error") => {
+                return Err(DebridError::Message(format!(
+                    "Premiumize: {}",
+                    transfer
+                        .map(error_message)
+                        .unwrap_or_else(|| "transfer failed".to_string())
+                )));
+            }
+            _ => tokio::time::sleep(std::time::Duration::from_millis(2500)).await,
+        }
+    }
     let Some(folder_id) = folder_id else {
-        return Ok(Vec::new());
+        return Err(DebridError::Message(
+            "Premiumize transfer did not become ready in time".to_string(),
+        ));
     };
 
     let folder: Value = client
         .get(format!("{BASE}/folder/list"))
-        .query(&[("id", folder_id.as_str()), ("apikey", api_key)])
+        .bearer_auth(api_key)
+        .query(&[("id", folder_id.as_str())])
         .send()
         .await?
         .json()
         .await?;
+
+    if folder.get("status").and_then(Value::as_str) == Some("error") {
+        return Err(DebridError::Message(format!(
+            "Premiumize: {}",
+            error_message(&folder)
+        )));
+    }
 
     let links = folder
         .get("content")
@@ -96,24 +134,27 @@ pub async fn convert_magnet(
 pub async fn hosts(client: &reqwest::Client, api_key: &str) -> Result<Vec<String>, DebridError> {
     let data: Value = client
         .get(format!("{BASE}/services/list"))
-        .query(&[("apikey", api_key)])
+        .bearer_auth(api_key)
         .send()
         .await?
         .json()
         .await?;
 
     if data.get("status").and_then(Value::as_str) != Some("success") {
-        return Err(DebridError::Message(format!("Premiumize: {}", error_message(&data))));
+        return Err(DebridError::Message(format!(
+            "Premiumize: {}",
+            error_message(&data)
+        )));
     }
 
     let mut hosts: Vec<String> = Vec::new();
     for key in ["directdl", "cache"] {
         if let Some(arr) = data.get(key).and_then(Value::as_array) {
             for entry in arr {
-                if let Some(host) = entry.as_str() {
-                    if host.contains('.') {
-                        hosts.push(host.to_string());
-                    }
+                if let Some(host) = entry.as_str()
+                    && host.contains('.')
+                {
+                    hosts.push(host.to_string());
                 }
             }
         }
@@ -124,5 +165,8 @@ pub async fn hosts(client: &reqwest::Client, api_key: &str) -> Result<Vec<String
 }
 
 fn error_message(data: &Value) -> String {
-    data.get("message").and_then(Value::as_str).unwrap_or("Unknown error").to_string()
+    data.get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Unknown error")
+        .to_string()
 }

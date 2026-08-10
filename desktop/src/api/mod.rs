@@ -3,20 +3,22 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
 use axum::extract::{Path as AxumPath, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{delete, get};
-use axum::Router;
+use base64::Engine;
+use rand::TryRngCore;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio_stream::{Stream, StreamExt};
-use tower_http::cors::{Any, CorsLayer};
-use uuid::Uuid;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::state::AppState;
+use crate::store::StoreError;
 use crate::store::schema::DEFAULT_API_PORT;
 
 const API_VERSION: u32 = 1;
@@ -27,6 +29,10 @@ pub enum ApiError {
     Io(#[from] std::io::Error),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("store error: {0}")]
+    Store(#[from] StoreError),
+    #[error("token generation failed: {0}")]
+    Token(String),
 }
 
 #[derive(Clone)]
@@ -51,10 +57,23 @@ impl ApiServer {
             return Ok(None);
         }
 
-        let token = ensure_api_token(&app);
-        let state = ApiState { app: app.clone(), token: token.clone() };
+        let token = ensure_api_token(&app)?;
+        let state = ApiState {
+            app: app.clone(),
+            token: token.clone(),
+        };
 
-        let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
+        let cors = CorsLayer::new()
+            .allow_origin(AllowOrigin::list([
+                HeaderValue::from_static("null"),
+                HeaderValue::from_static("http://localhost:5177"),
+                HeaderValue::from_static("http://127.0.0.1:5177"),
+            ]))
+            .allow_methods([Method::GET, Method::POST, Method::DELETE])
+            .allow_headers([
+                axum::http::header::AUTHORIZATION,
+                axum::http::header::CONTENT_TYPE,
+            ]);
         let router = Router::new()
             .route("/v1/health", get(health))
             .route("/v1/torrents", get(list_torrents).post(add_torrent))
@@ -63,13 +82,14 @@ impl ApiServer {
             .layer(cors)
             .with_state(state);
 
-        let listener = match TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], preferred_port))).await {
-            Ok(listener) => listener,
-            Err(_) if preferred_port != 0 => {
-                TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?
-            }
-            Err(err) => return Err(err.into()),
-        };
+        let listener =
+            match TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], preferred_port))).await {
+                Ok(listener) => listener,
+                Err(_) if preferred_port != 0 => {
+                    TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?
+                }
+                Err(err) => return Err(err.into()),
+            };
         let port = listener.local_addr()?.port();
         write_discovery(&data_dir, port, &token)?;
 
@@ -91,7 +111,11 @@ fn check_auth(headers: &HeaderMap, state: &ApiState) -> bool {
 }
 
 fn unauthorized() -> Response {
-    (StatusCode::UNAUTHORIZED, Json(json!({ "error": "Unauthorized" }))).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "Unauthorized" })),
+    )
+        .into_response()
 }
 
 async fn health() -> Json<Value> {
@@ -134,16 +158,29 @@ async fn add_torrent(
         .or(body.magnet_uri)
         .filter(|m| m.starts_with("magnet:"));
     let Some(magnet) = magnet else {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "magnet is required" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "magnet is required" })),
+        )
+            .into_response();
     };
 
-    match state.app.torrent_engine.add_magnet(state.app.clone(), magnet, None).await {
+    match state
+        .app
+        .torrent_engine
+        .add_magnet(state.app.clone(), magnet, None)
+        .await
+    {
         Ok(info) => (
             StatusCode::CREATED,
             Json(serde_json::to_value(info).unwrap_or(Value::Null)),
         )
             .into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, Json(json!({ "error": err.to_string() }))).into_response(),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": err.to_string() })),
+        )
+            .into_response(),
     }
 }
 
@@ -155,9 +192,18 @@ async fn remove_torrent(
     if !check_auth(&headers, &state) {
         return unauthorized();
     }
-    match state.app.torrent_engine.remove(&state.app, &id, false).await {
+    match state
+        .app
+        .torrent_engine
+        .remove(&state.app, &id, false)
+        .await
+    {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
-        Err(err) => (StatusCode::NOT_FOUND, Json(json!({ "error": err.to_string() }))).into_response(),
+        Err(err) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": err.to_string() })),
+        )
+            .into_response(),
     }
 }
 
@@ -170,15 +216,16 @@ async fn events(
     }
 
     let app = state.app.clone();
-    let stream = tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(1)))
-        .map(move |_| {
-            let torrents = app.store.with(|d| d.torrents.clone());
-            let event = Event::default()
-                .event("progress")
-                .json_data(json!({ "torrents": torrents }))
-                .unwrap_or_else(|_| Event::default());
-            Ok(event)
-        });
+    let stream =
+        tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(1)))
+            .map(move |_| {
+                let torrents = app.store.with(|d| d.torrents.clone());
+                let event = Event::default()
+                    .event("progress")
+                    .json_data(json!({ "torrents": torrents }))
+                    .unwrap_or_else(|_| Event::default());
+                Ok(event)
+            });
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
@@ -207,24 +254,42 @@ fn write_discovery(data_dir: &Path, port: u16, token: &str) -> Result<(), ApiErr
         base_url: format!("http://127.0.0.1:{port}"),
         updated_at: chrono::Utc::now().to_rfc3339(),
     };
-    std::fs::create_dir_all(data_dir)?;
-    std::fs::write(discovery_path(data_dir), serde_json::to_string_pretty(&discovery)?)?;
+    let contents = serde_json::to_vec_pretty(&discovery)?;
+    crate::store::write_private_file(&discovery_path(data_dir), &contents)?;
     Ok(())
 }
 
-fn ensure_api_token(app: &AppState) -> String {
+fn ensure_api_token(app: &AppState) -> Result<String, ApiError> {
     let existing = app.store.with(|d| d.settings.api_token.clone());
-    if let Some(token) = existing {
-        if token.len() >= 16 {
-            return token;
-        }
+    if let Some(token) = existing.filter(|token| token_is_strong(token)) {
+        return Ok(token);
     }
-    let token = generate_token();
+    let token = generate_token()?;
     let persisted = token.clone();
-    app.store.with_mut(|d| d.settings.api_token = Some(persisted)).ok();
-    token
+    app.store
+        .with_mut(|d| d.settings.api_token = Some(persisted))?;
+    Ok(token)
 }
 
-fn generate_token() -> String {
-    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+fn generate_token() -> Result<String, ApiError> {
+    let mut bytes = [0_u8; 32];
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut bytes)
+        .map_err(|error| ApiError::Token(error.to_string()))?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn token_is_strong(token: &str) -> bool {
+    if token.len() < 43 {
+        return false;
+    }
+    let mut distinct = [false; 256];
+    let mut distinct_count = 0;
+    for byte in token.bytes() {
+        if !distinct[byte as usize] {
+            distinct[byte as usize] = true;
+            distinct_count += 1;
+        }
+    }
+    distinct_count >= 12
 }

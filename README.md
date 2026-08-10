@@ -85,12 +85,13 @@ Pass `--target portable`, `--target deb`, `--target msi`, or `--target dmg` dire
 
 ## Companion API
 
-Limbo exposes a localhost HTTP API so other apps (for example Raffi) can add magnets and stream files without embedding a torrent client.
+Limbo exposes an authenticated localhost HTTP API so companion apps can manage torrents without embedding a torrent client.
 
 - Health: `GET http://127.0.0.1:17890/v1/health`
-- Add torrent: `POST /v1/torrents` with `{ "magnet": "...", "fileIndex": 0, "sequential": true, "clientId": "raffi" }` and `Authorization: Bearer <token>`
-- Status: `GET /v1/torrents/:id`
-- Stream: `GET /v1/stream/:infoHash/:fileIndex?token=<token>` (Range requests supported)
+- List torrents: `GET /v1/torrents` with `Authorization: Bearer <token>`
+- Add torrent: `POST /v1/torrents` with `{ "magnet": "..." }` and `Authorization: Bearer <token>`
+- Remove torrent: `DELETE /v1/torrents/:id` with `Authorization: Bearer <token>`
+- Progress events: `GET /v1/events` with `Authorization: Bearer <token>`
 - Discovery file under Limbo’s app data directory contains `{ port, token, baseUrl }`
 
 Toggle the API under Settings → Torrent Settings → Companion API.

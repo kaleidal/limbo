@@ -45,6 +45,7 @@ export interface Settings {
   enableSeeding: boolean;
   startOnBoot: boolean;
   requireVpn: boolean;
+  clipboardMonitoring: boolean;
   autoExtract: boolean;
   deleteArchiveAfterExtract: boolean;
   apiEnabled?: boolean;

@@ -8,7 +8,7 @@ mime_types = ["x-scheme-handler/magnet", "application/x-bittorrent"]
 
 [web]
 root = "."
-dist = "dist"
-entry = "dist/index.html"
+dist = "web-dist"
+entry = "web-dist/index.html"
 dev_port = 5177
 build = "bun run build"

@@ -8,7 +8,7 @@ use limbo_desktop::os::clipboard::ClipboardWatcher;
 use limbo_desktop::state::AppState;
 use limbo_desktop::store::Store;
 use sabine::{AutostartEntry, DeepLinkRegistration, SingleInstancePolicy};
-use sabine::{SabineLifecyclePolicy, SabineResult, SabineWindow, WindowRegionRect};
+use sabine::{SabineError, SabineLifecyclePolicy, SabineResult, SabineWindow, WindowRegionRect};
 use tracing_subscriber::EnvFilter;
 
 const APP_ID: &str = "al.kaleid.limbo";
@@ -20,7 +20,11 @@ static CLIPBOARD_WATCHER: OnceLock<ClipboardWatcher> = OnceLock::new();
 
 fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("limbo=info".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::from_default_env()
+                .add_directive("limbo=info".parse().unwrap())
+                .add_directive("limbo_desktop=info".parse().unwrap()),
+        )
         .init();
 
     SabineWindow::main(configure_window);
@@ -34,20 +38,28 @@ fn configure_window(window: SabineWindow) -> SabineResult<SabineWindow> {
             .expect("tokio runtime")
     });
     let handle = runtime.handle().clone();
-    let data_dir = data_dir();
-    let store = Store::load(&data_dir).expect("load store");
-    let start_on_boot = store.with(|data| data.settings.start_on_boot);
-    let app = Arc::new(AppState::new(store, handle));
+    let data_dir = data_dir()?;
+    let store = Store::load(&data_dir).map_err(startup_error)?;
+    let (start_on_boot, clipboard_monitoring) = store.with(|data| {
+        (
+            data.settings.start_on_boot,
+            data.settings.clipboard_monitoring,
+        )
+    });
+    let app = Arc::new(AppState::new(store, handle).map_err(startup_error)?);
     queue_launch_arguments(&app, std::env::args());
 
     let download_path = app.store.with(|data| data.settings.download_path.clone());
     {
         let app = app.clone();
+        let torrent_state_dir = data_dir.join("torrents");
         runtime.spawn(async move {
-            if let Err(error) = app.torrent_engine.init(&download_path).await {
+            if let Err(error) = app
+                .torrent_engine
+                .init(app.clone(), &download_path, torrent_state_dir)
+                .await
+            {
                 tracing::error!("torrent engine init failed: {error}");
-            } else {
-                *app.stream_port.lock() = app.torrent_engine.stream_port();
             }
         });
     }
@@ -63,15 +75,14 @@ fn configure_window(window: SabineWindow) -> SabineResult<SabineWindow> {
         });
     }
 
-    assert!(
+    if clipboard_monitoring {
         CLIPBOARD_WATCHER
             .set(ClipboardWatcher::start(
                 app.clone(),
                 Duration::from_millis(250),
             ))
-            .is_ok(),
-        "clipboard watcher initialized more than once"
-    );
+            .map_err(|_| startup_error("clipboard watcher initialized more than once"))?;
+    }
 
     tracing::info!("opening Limbo with Sabine");
     Ok(ipc::attach(
@@ -113,8 +124,19 @@ fn queue_launch_arguments(app: &AppState, arguments: impl IntoIterator<Item = St
     }
 }
 
-fn data_dir() -> PathBuf {
-    directories::ProjectDirs::from("al", "kaleid", "Limbo")
-        .map(|dirs| dirs.data_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(".").join("limbo-data"))
+fn data_dir() -> SabineResult<PathBuf> {
+    if let Some(dirs) = directories::ProjectDirs::from("al", "kaleid", "Limbo") {
+        return Ok(dirs.data_dir().to_path_buf());
+    }
+    let executable = std::env::current_exe().map_err(startup_error)?;
+    let parent = executable
+        .parent()
+        .ok_or_else(|| startup_error("application executable has no parent directory"))?;
+    Ok(parent.join("limbo-data"))
+}
+
+fn startup_error(error: impl std::fmt::Display) -> SabineError {
+    SabineError::CreationFailed {
+        message: error.to_string(),
+    }
 }

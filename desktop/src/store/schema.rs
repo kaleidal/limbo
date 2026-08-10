@@ -84,7 +84,7 @@ pub struct TorrentInfo {
     pub keep_alive: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DebridSettings {
     pub service: Option<String>,
@@ -99,19 +99,6 @@ pub struct DebridSettings {
     pub client_secret: Option<String>,
 }
 
-impl Default for DebridSettings {
-    fn default() -> Self {
-        Self {
-            service: None,
-            api_key: String::new(),
-            refresh_token: None,
-            expires_at: None,
-            client_id: None,
-            client_secret: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -120,6 +107,8 @@ pub struct Settings {
     pub enable_seeding: bool,
     pub start_on_boot: bool,
     pub require_vpn: bool,
+    #[serde(default)]
+    pub clipboard_monitoring: bool,
     pub auto_extract: bool,
     pub delete_archive_after_extract: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,6 +137,7 @@ impl Default for Settings {
             enable_seeding: false,
             start_on_boot: false,
             require_vpn: false,
+            clipboard_monitoring: false,
             auto_extract: true,
             delete_archive_after_extract: false,
             api_enabled: Some(true),

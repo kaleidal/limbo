@@ -19,11 +19,16 @@ pub fn pick_files(title: &str, filters: &[(&str, &[&str])]) -> Vec<PathBuf> {
 }
 
 pub fn save_file(title: &str, default_name: &str, filters: &[(&str, &[&str])]) -> Option<PathBuf> {
-    let dialog = rfd::FileDialog::new().set_title(title).set_file_name(default_name);
+    let dialog = rfd::FileDialog::new()
+        .set_title(title)
+        .set_file_name(default_name);
     apply_filters(dialog, filters).save_file()
 }
 
-fn apply_filters<'a>(mut dialog: rfd::FileDialog, filters: &[(&'a str, &'a [&'a str])]) -> rfd::FileDialog {
+fn apply_filters<'a>(
+    mut dialog: rfd::FileDialog,
+    filters: &[(&'a str, &'a [&'a str])],
+) -> rfd::FileDialog {
     for (name, extensions) in filters {
         dialog = dialog.add_filter(*name, extensions);
     }

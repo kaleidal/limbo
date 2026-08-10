@@ -3,11 +3,17 @@ use serde_json::Value;
 use super::{DebridError, DebridResult};
 
 const BASE: &str = "https://api.alldebrid.com/v4";
+const STATUS_BASE: &str = "https://api.alldebrid.com/v4.1";
 
-pub async fn unrestrict(client: &reqwest::Client, api_key: &str, url: &str) -> Result<DebridResult, DebridError> {
+pub async fn unrestrict(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> Result<DebridResult, DebridError> {
     let data: Value = client
         .get(format!("{BASE}/link/unlock"))
-        .query(&[("agent", "limbo"), ("apikey", api_key), ("link", url)])
+        .bearer_auth(api_key)
+        .query(&[("agent", "limbo"), ("link", url)])
         .send()
         .await?
         .json()
@@ -37,34 +43,21 @@ pub async fn convert_magnet(
     magnet: &str,
 ) -> Result<Vec<String>, DebridError> {
     let upload: Value = client
-        .get(format!("{BASE}/magnet/upload"))
-        .query(&[("agent", "limbo"), ("apikey", api_key), ("magnets[]", magnet)])
+        .post(format!("{BASE}/magnet/upload"))
+        .bearer_auth(api_key)
+        .form(&[("agent", "limbo"), ("magnets[]", magnet)])
         .send()
         .await?
         .json()
         .await?;
 
     let Some(id) = upload.pointer("/data/magnets/0/id").and_then(Value::as_i64) else {
-        return Ok(Vec::new());
+        return Err(DebridError::Message(format!(
+            "AllDebrid: {}",
+            error_message(&upload)
+        )));
     };
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-    let status: Value = client
-        .get(format!("{BASE}/magnet/status"))
-        .query(&[("agent", "limbo"), ("apikey", api_key), ("id", &id.to_string())])
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let links = status
-        .pointer("/data/magnets/links")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry.get("link").and_then(Value::as_str).map(str::to_string))
-        .collect();
-    Ok(links)
+    wait_for_links(client, api_key, id).await
 }
 
 pub async fn convert_torrent_file(
@@ -88,63 +81,30 @@ pub async fn convert_torrent_file(
         .await?;
 
     let Some(id) = upload.pointer("/data/files/0/id").and_then(Value::as_i64) else {
-        return Err(DebridError::Message(format!("AllDebrid: {}", error_message(&upload))));
+        return Err(DebridError::Message(format!(
+            "AllDebrid: {}",
+            error_message(&upload)
+        )));
     };
 
-    let files_form = reqwest::multipart::Form::new().text("id[]", id.to_string());
-    let files: Value = client
-        .post(format!("{BASE}/magnet/files"))
-        .bearer_auth(api_key)
-        .multipart(files_form)
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let mut links: Vec<String> = files
-        .pointer("/data/magnets")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .flat_map(|magnet| magnet.get("files").and_then(Value::as_array).cloned().unwrap_or_default())
-        .flat_map(|file| flatten_links(&file))
-        .collect();
-    if !links.is_empty() {
-        return Ok(links);
-    }
-
-    let status_form = reqwest::multipart::Form::new().text("id", id.to_string());
-    let status: Value = client
-        .post("https://api.alldebrid.com/v4.1/magnet/status")
-        .bearer_auth(api_key)
-        .multipart(status_form)
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    links = status
-        .pointer("/data/magnets")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .flat_map(|magnet| magnet.get("links").and_then(Value::as_array).cloned().unwrap_or_default())
-        .filter_map(|entry| entry.get("link").and_then(Value::as_str).map(str::to_string))
-        .collect();
-    Ok(links)
+    wait_for_links(client, api_key, id).await
 }
 
 pub async fn hosts(client: &reqwest::Client, api_key: &str) -> Result<Vec<String>, DebridError> {
     let data: Value = client
         .get(format!("{BASE}/hosts"))
-        .query(&[("agent", "limbo"), ("apikey", api_key)])
+        .bearer_auth(api_key)
+        .query(&[("agent", "limbo")])
         .send()
         .await?
         .json()
         .await?;
 
     if is_error(&data) {
-        return Err(DebridError::Message(format!("AllDebrid: {}", error_message(&data))));
+        return Err(DebridError::Message(format!(
+            "AllDebrid: {}",
+            error_message(&data)
+        )));
     }
 
     let mut hosts = Vec::new();
@@ -177,11 +137,90 @@ fn error_message(data: &Value) -> String {
 }
 
 fn flatten_links(value: &Value) -> Vec<String> {
-    if let Some(link) = value.get("link").and_then(Value::as_str) {
+    if let Some(link) = value.get("l").and_then(Value::as_str) {
         return vec![link.to_string()];
     }
-    if let Some(files) = value.get("files").and_then(Value::as_array) {
+    if let Some(files) = value.get("e").and_then(Value::as_array) {
         return files.iter().flat_map(flatten_links).collect();
     }
     Vec::new()
+}
+
+async fn wait_for_links(
+    client: &reqwest::Client,
+    api_key: &str,
+    id: i64,
+) -> Result<Vec<String>, DebridError> {
+    for _ in 0..24 {
+        let status: Value = client
+            .post(format!("{STATUS_BASE}/magnet/status"))
+            .bearer_auth(api_key)
+            .form(&[("id", id.to_string())])
+            .send()
+            .await?
+            .json()
+            .await?;
+        if is_error(&status) {
+            return Err(DebridError::Message(format!(
+                "AllDebrid: {}",
+                error_message(&status)
+            )));
+        }
+        let magnet = status.pointer("/data/magnets").and_then(|value| {
+            value
+                .as_array()
+                .and_then(|items| items.first())
+                .or(Some(value))
+        });
+        let status_code = magnet
+            .and_then(|item| item.get("statusCode"))
+            .and_then(Value::as_i64);
+        if status_code == Some(4) {
+            let files: Value = client
+                .post(format!("{BASE}/magnet/files"))
+                .bearer_auth(api_key)
+                .form(&[("id[]", id.to_string())])
+                .send()
+                .await?
+                .json()
+                .await?;
+            if is_error(&files) {
+                return Err(DebridError::Message(format!(
+                    "AllDebrid: {}",
+                    error_message(&files)
+                )));
+            }
+            let links = files
+                .pointer("/data/magnets")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .flat_map(|magnet| {
+                    magnet
+                        .get("files")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .flat_map(flatten_links)
+                })
+                .collect::<Vec<_>>();
+            if links.is_empty() {
+                return Err(DebridError::Message(
+                    "AllDebrid torrent completed without downloadable links".to_string(),
+                ));
+            }
+            return Ok(links);
+        }
+        if status_code.is_some_and(|code| (5..=15).contains(&code)) {
+            let message = magnet
+                .and_then(|item| item.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("torrent failed");
+            return Err(DebridError::Message(format!("AllDebrid: {message}")));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    }
+    Err(DebridError::Message(
+        "AllDebrid torrent did not become ready in time".to_string(),
+    ))
 }

@@ -1,5 +1,6 @@
 use sabine::{BridgeError, SabineWindow};
 use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::os;
@@ -46,9 +47,16 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
                     .map(|i| i.path.clone())
             });
             if delete_files {
-                if let Some(path) = path {
-                    let _ = std::fs::remove_file(&path);
-                    let _ = std::fs::remove_dir_all(&path);
+                let path = path.ok_or_else(|| BridgeError::new("library item not found"))?;
+                let target = authorized_path(&app, &path, false)?;
+                let metadata = std::fs::symlink_metadata(&target)
+                    .map_err(|error| BridgeError::new(error.to_string()))?;
+                if metadata.file_type().is_dir() {
+                    std::fs::remove_dir_all(&target)
+                        .map_err(|error| BridgeError::new(error.to_string()))?;
+                } else {
+                    std::fs::remove_file(&target)
+                        .map_err(|error| BridgeError::new(error.to_string()))?;
                 }
             }
             app.store
@@ -62,23 +70,22 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
             ok(library)
         },
     );
-    window = register(
-        window,
-        "limbo.openFileLocation",
-        app.clone(),
-        |_app, cmd| {
-            let Some(path) = param_str(&cmd.params, "path") else {
-                return err("path required");
-            };
-            os::shell::show_in_folder(&path).map_err(|e| BridgeError::new(e.to_string()))?;
-            ok(json!({ "success": true }))
-        },
-    );
-    window = register(window, "limbo.openFile", app.clone(), |_app, cmd| {
+    window = register(window, "limbo.openFileLocation", app.clone(), |app, cmd| {
         let Some(path) = param_str(&cmd.params, "path") else {
             return err("path required");
         };
-        os::shell::open_path(&path).map_err(|e| BridgeError::new(e.to_string()))?;
+        let target = authorized_path(&app, &path, true)?;
+        os::shell::show_in_folder(&target.to_string_lossy())
+            .map_err(|e| BridgeError::new(e.to_string()))?;
+        ok(json!({ "success": true }))
+    });
+    window = register(window, "limbo.openFile", app.clone(), |app, cmd| {
+        let Some(path) = param_str(&cmd.params, "path") else {
+            return err("path required");
+        };
+        let target = authorized_path(&app, &path, true)?;
+        os::shell::open_path(&target.to_string_lossy())
+            .map_err(|e| BridgeError::new(e.to_string()))?;
         ok(json!({ "success": true }))
     });
     window = register(window, "limbo.addFolderToLibrary", app.clone(), |app, _| {
@@ -101,7 +108,40 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
         app.store
             .with_mut(|d| d.library.push(item.clone()))
             .map_err(|e| BridgeError::new(e.to_string()))?;
+        app.push_event(
+            "library-updated",
+            serde_json::to_value(app.store.with(|data| data.library.clone())).unwrap_or_default(),
+        );
         ok(item)
     });
     window
+}
+
+fn authorized_path(
+    app: &App,
+    requested: &str,
+    allow_library_item: bool,
+) -> Result<PathBuf, BridgeError> {
+    let target = Path::new(requested)
+        .canonicalize()
+        .map_err(|error| BridgeError::new(error.to_string()))?;
+    let download_root = app.store.with(|data| data.settings.download_path.clone());
+    let download_root = Path::new(&download_root)
+        .canonicalize()
+        .map_err(|error| BridgeError::new(error.to_string()))?;
+    let exact_managed_item = app.store.with(|data| {
+        data.downloads
+            .iter()
+            .any(|item| Path::new(&item.path).canonicalize().ok().as_ref() == Some(&target))
+            || (allow_library_item
+                && data.library.iter().any(|item| {
+                    Path::new(&item.path).canonicalize().ok().as_ref() == Some(&target)
+                }))
+    });
+    if (target == download_root && !allow_library_item)
+        || (!target.starts_with(&download_root) && !exact_managed_item)
+    {
+        return Err(BridgeError::new("path is outside Limbo's managed files"));
+    }
+    Ok(target)
 }

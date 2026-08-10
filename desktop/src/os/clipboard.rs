@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::state::AppState;
@@ -11,12 +11,16 @@ pub enum ClipboardError {
 }
 
 pub fn read_text() -> Result<String, ClipboardError> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
-    clipboard.get_text().map_err(|e| ClipboardError::Unavailable(e.to_string()))
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+    clipboard
+        .get_text()
+        .map_err(|e| ClipboardError::Unavailable(e.to_string()))
 }
 
 pub fn write_text(text: &str) -> Result<(), ClipboardError> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
     clipboard
         .set_text(text.to_string())
         .map_err(|e| ClipboardError::Unavailable(e.to_string()))
@@ -38,16 +42,17 @@ impl ClipboardWatcher {
             let mut last = String::new();
 
             while !stop_flag.load(Ordering::SeqCst) {
-                if let Ok(text) = clipboard.get_text() {
-                    if !text.is_empty() && text != last {
-                        last = text.clone();
-                        let urls = extract_downloadable_urls(&text);
-                        if !urls.is_empty() {
-                            app.push_event(
-                                "clipboard-download-detected",
-                                serde_json::to_value(&urls).unwrap_or_default(),
-                            );
-                        }
+                if let Ok(text) = clipboard.get_text()
+                    && !text.is_empty()
+                    && text != last
+                {
+                    last = text.clone();
+                    let urls = extract_downloadable_urls(&text);
+                    if !urls.is_empty() {
+                        app.push_event(
+                            "clipboard-download-detected",
+                            serde_json::to_value(&urls).unwrap_or_default(),
+                        );
                     }
                 }
                 std::thread::sleep(interval);
@@ -72,7 +77,10 @@ fn extract_downloadable_urls(text: &str) -> Vec<String> {
     let mut urls = Vec::new();
     for token in text.split_whitespace() {
         let trimmed = token.trim_matches(|c: char| {
-            matches!(c, '"' | '\'' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',')
+            matches!(
+                c,
+                '"' | '\'' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ','
+            )
         });
         if trimmed.starts_with("magnet:")
             || trimmed.starts_with("http://")

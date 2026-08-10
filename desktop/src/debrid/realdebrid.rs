@@ -19,6 +19,8 @@ pub struct TorrentAddResponse {
 #[derive(Debug, Deserialize, Default)]
 pub struct TorrentInfoResponse {
     pub links: Option<Vec<String>>,
+    pub status: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -45,7 +47,8 @@ pub struct DeviceCredentialsResponse {
 
 pub fn friendly_error(error: &str) -> String {
     if error.starts_with("ip_not_allowed") {
-        "Real-Debrid: IP not allowed. Regenerate API key from current IP or disable VPN.".to_string()
+        "Real-Debrid: IP not allowed. Regenerate API key from current IP or disable VPN."
+            .to_string()
     } else if error == "hoster_unavailable" || error == "link_host_not_supported" {
         "Real-Debrid: This file host is not supported.".to_string()
     } else if error == "bad_token" || error == "bad_token_check" {
@@ -100,7 +103,11 @@ pub async fn add_torrent_file(
         .await
 }
 
-pub async fn select_files(client: &reqwest::Client, api_key: &str, id: &str) -> Result<(), reqwest::Error> {
+pub async fn select_files(
+    client: &reqwest::Client,
+    api_key: &str,
+    id: &str,
+) -> Result<(), reqwest::Error> {
     client
         .post(format!("{BASE}/rest/1.0/torrents/selectFiles/{id}"))
         .bearer_auth(api_key)
@@ -184,13 +191,16 @@ pub async fn refresh_token(
     let form = [
         ("client_id", client_id),
         ("client_secret", client_secret),
-        ("refresh_token", refresh_token),
+        ("code", refresh_token),
         ("grant_type", "http://oauth.net/grant_type/device/1.0"),
     ];
     post_token(client, &form).await
 }
 
-async fn post_token(client: &reqwest::Client, form: &[(&str, &str)]) -> Result<TokenResponse, reqwest::Error> {
+async fn post_token(
+    client: &reqwest::Client,
+    form: &[(&str, &str)],
+) -> Result<TokenResponse, reqwest::Error> {
     client
         .post(format!("{OAUTH_BASE}/token"))
         .form(form)

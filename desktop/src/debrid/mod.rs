@@ -68,21 +68,16 @@ pub struct DebridService {
     rd_device: Mutex<Option<RdDeviceState>>,
 }
 
-impl Default for DebridService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl DebridService {
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Result<Self, reqwest::Error> {
+        Ok(Self {
             client: reqwest::Client::builder()
                 .use_rustls_tls()
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
+                .connect_timeout(Duration::from_secs(15))
+                .timeout(Duration::from_secs(60))
+                .build()?,
             rd_device: Mutex::new(None),
-        }
+        })
     }
 
     pub fn is_configured(&self, app: &AppState) -> bool {
@@ -118,7 +113,11 @@ impl DebridService {
         })
     }
 
-    pub async fn unrestrict_link(&self, app: &AppState, url: &str) -> Result<DebridResult, DebridError> {
+    pub async fn unrestrict_link(
+        &self,
+        app: &AppState,
+        url: &str,
+    ) -> Result<DebridResult, DebridError> {
         let cfg = self.resolved_config(app).await?;
         match cfg.service.as_deref() {
             Some("realdebrid") => self.rd_unrestrict(app, &cfg, url).await,
@@ -129,12 +128,20 @@ impl DebridService {
         }
     }
 
-    pub async fn convert_magnet(&self, app: &AppState, magnet_uri: &str) -> Result<Vec<String>, DebridError> {
+    pub async fn convert_magnet(
+        &self,
+        app: &AppState,
+        magnet_uri: &str,
+    ) -> Result<Vec<String>, DebridError> {
         let cfg = self.resolved_config(app).await?;
         match cfg.service.as_deref() {
             Some("realdebrid") => self.rd_convert_magnet(app, cfg, magnet_uri).await,
-            Some("alldebrid") => alldebrid::convert_magnet(&self.client, &cfg.api_key, magnet_uri).await,
-            Some("premiumize") => premiumize::convert_magnet(&self.client, &cfg.api_key, magnet_uri).await,
+            Some("alldebrid") => {
+                alldebrid::convert_magnet(&self.client, &cfg.api_key, magnet_uri).await
+            }
+            Some("premiumize") => {
+                premiumize::convert_magnet(&self.client, &cfg.api_key, magnet_uri).await
+            }
             Some("torbox") => torbox::convert_magnet(&self.client, &cfg.api_key, magnet_uri).await,
             _ => Err(DebridError::NotConfigured),
         }
@@ -155,17 +162,29 @@ impl DebridService {
             ));
         }
 
-        let response = self.client.get(torrent_url).send().await?.error_for_status()?;
         let filename = derive_torrent_filename(torrent_url);
-        let bytes = response.bytes().await?.to_vec();
+        let bytes = crate::net::fetch_public_bounded(
+            torrent_url,
+            10 * 1024 * 1024,
+            Duration::from_secs(60),
+        )
+        .await
+        .map_err(|error| DebridError::Message(format!("Unable to fetch torrent: {error}")))?
+        .bytes;
         if bytes.is_empty() {
-            return Err(DebridError::Message("Fetched torrent file was empty".to_string()));
+            return Err(DebridError::Message(
+                "Fetched torrent file was empty".to_string(),
+            ));
         }
 
         match cfg.service.as_deref() {
             Some("realdebrid") => self.rd_convert_torrent_file(app, cfg, bytes).await,
-            Some("alldebrid") => alldebrid::convert_torrent_file(&self.client, &cfg.api_key, &filename, bytes).await,
-            Some("torbox") => torbox::convert_torrent_file(&self.client, &cfg.api_key, &filename, bytes).await,
+            Some("alldebrid") => {
+                alldebrid::convert_torrent_file(&self.client, &cfg.api_key, &filename, bytes).await
+            }
+            Some("torbox") => {
+                torbox::convert_torrent_file(&self.client, &cfg.api_key, &filename, bytes).await
+            }
             _ => Err(DebridError::NotConfigured),
         }
     }
@@ -210,7 +229,10 @@ impl DebridService {
         *self.rd_device.lock() = None;
     }
 
-    pub async fn poll_realdebrid_device(&self, app: &AppState) -> Result<RdDevicePoll, DebridError> {
+    pub async fn poll_realdebrid_device(
+        &self,
+        app: &AppState,
+    ) -> Result<RdDevicePoll, DebridError> {
         let Some(state) = self.rd_device.lock().clone() else {
             return Ok(RdDevicePoll::Idle);
         };
@@ -222,15 +244,21 @@ impl DebridService {
             });
         }
 
-        let Some(creds) = realdebrid::device_credentials(&self.client, &state.device_code).await? else {
+        let Some(creds) = realdebrid::device_credentials(&self.client, &state.device_code).await?
+        else {
             return Ok(RdDevicePoll::Pending);
         };
         let (Some(client_id), Some(client_secret)) = (creds.client_id, creds.client_secret) else {
             return Ok(RdDevicePoll::Pending);
         };
 
-        let token =
-            realdebrid::exchange_device_code(&self.client, &client_id, &client_secret, &state.device_code).await?;
+        let token = realdebrid::exchange_device_code(
+            &self.client,
+            &client_id,
+            &client_secret,
+            &state.device_code,
+        )
+        .await?;
         let Some(access_token) = token.access_token.clone() else {
             return Ok(RdDevicePoll::Error {
                 error: "Real-Debrid: No access_token returned".to_string(),
@@ -275,14 +303,19 @@ impl DebridService {
         app: &AppState,
         cfg: &DebridSettings,
     ) -> Result<Option<DebridSettings>, DebridError> {
-        let (Some(refresh_token), Some(client_id), Some(client_secret)) =
-            (cfg.refresh_token.clone(), cfg.client_id.clone(), cfg.client_secret.clone())
-        else {
+        let (Some(refresh_token), Some(client_id), Some(client_secret)) = (
+            cfg.refresh_token.clone(),
+            cfg.client_id.clone(),
+            cfg.client_secret.clone(),
+        ) else {
             return Ok(None);
         };
 
-        let token = realdebrid::refresh_token(&self.client, &client_id, &client_secret, &refresh_token).await?;
-        let (Some(access_token), Some(new_refresh)) = (token.access_token, token.refresh_token) else {
+        let token =
+            realdebrid::refresh_token(&self.client, &client_id, &client_secret, &refresh_token)
+                .await?;
+        let (Some(access_token), Some(new_refresh)) = (token.access_token, token.refresh_token)
+        else {
             return Ok(None);
         };
 
@@ -303,11 +336,13 @@ impl DebridService {
     ) -> Result<DebridResult, DebridError> {
         let mut api_key = cfg.api_key.clone();
         let mut data = realdebrid::unrestrict(&self.client, &api_key, url).await?;
-        if matches!(data.error.as_deref(), Some("bad_token") | Some("bad_token_check")) {
-            if let Some(refreshed) = self.try_refresh_realdebrid(app, cfg).await? {
-                api_key = refreshed.api_key;
-                data = realdebrid::unrestrict(&self.client, &api_key, url).await?;
-            }
+        if matches!(
+            data.error.as_deref(),
+            Some("bad_token") | Some("bad_token_check")
+        ) && let Some(refreshed) = self.try_refresh_realdebrid(app, cfg).await?
+        {
+            api_key = refreshed.api_key;
+            data = realdebrid::unrestrict(&self.client, &api_key, url).await?;
         }
 
         if let Some(err) = data.error {
@@ -330,12 +365,13 @@ impl DebridService {
     ) -> Result<Vec<String>, DebridError> {
         let add = realdebrid::add_magnet(&self.client, &cfg.api_key, magnet).await?;
         let Some(id) = add.id else {
-            return Ok(Vec::new());
+            return Err(DebridError::Message(add.error.unwrap_or_else(|| {
+                "Real-Debrid: magnet upload failed".to_string()
+            })));
         };
         realdebrid::select_files(&self.client, &cfg.api_key, &id).await?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let info = realdebrid::torrent_info(&self.client, &cfg.api_key, &id).await?;
-        self.unrestrict_all(app, &cfg, info.links.unwrap_or_default()).await
+        let links = self.wait_for_realdebrid_torrent(&cfg.api_key, &id).await?;
+        self.unrestrict_all(app, links).await
     }
 
     async fn rd_convert_torrent_file(
@@ -346,28 +382,64 @@ impl DebridService {
     ) -> Result<Vec<String>, DebridError> {
         let add = realdebrid::add_torrent_file(&self.client, &cfg.api_key, bytes).await?;
         let Some(id) = add.id else {
-            return Err(DebridError::Message(
-                add.error.unwrap_or_else(|| "Real-Debrid: torrent upload failed".to_string()),
-            ));
+            return Err(DebridError::Message(add.error.unwrap_or_else(|| {
+                "Real-Debrid: torrent upload failed".to_string()
+            })));
         };
         realdebrid::select_files(&self.client, &cfg.api_key, &id).await?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let info = realdebrid::torrent_info(&self.client, &cfg.api_key, &id).await?;
-        self.unrestrict_all(app, &cfg, info.links.unwrap_or_default()).await
+        let links = self.wait_for_realdebrid_torrent(&cfg.api_key, &id).await?;
+        self.unrestrict_all(app, links).await
+    }
+
+    async fn wait_for_realdebrid_torrent(
+        &self,
+        api_key: &str,
+        id: &str,
+    ) -> Result<Vec<String>, DebridError> {
+        for _ in 0..24 {
+            let info = realdebrid::torrent_info(&self.client, api_key, id).await?;
+            if let Some(error) = info.error {
+                return Err(DebridError::Message(format!("Real-Debrid: {error}")));
+            }
+            let status = info.status.as_deref().unwrap_or_default();
+            if matches!(status, "magnet_error" | "error" | "virus" | "dead") {
+                return Err(DebridError::Message(format!(
+                    "Real-Debrid torrent failed: {status}"
+                )));
+            }
+            if status == "downloaded" {
+                let links = info.links.unwrap_or_default();
+                if links.is_empty() {
+                    return Err(DebridError::Message(
+                        "Real-Debrid torrent completed without downloadable links".to_string(),
+                    ));
+                }
+                return Ok(links);
+            }
+            tokio::time::sleep(Duration::from_millis(2500)).await;
+        }
+        Err(DebridError::Message(
+            "Real-Debrid torrent did not become ready in time".to_string(),
+        ))
     }
 
     async fn unrestrict_all(
         &self,
         app: &AppState,
-        cfg: &DebridSettings,
         links: Vec<String>,
     ) -> Result<Vec<String>, DebridError> {
         let mut resolved = Vec::new();
         for link in links {
-            if let Ok(result) = self.rd_unrestrict(app, cfg, &link).await {
-                if let Some(url) = result.url {
-                    resolved.push(url);
-                }
+            let cfg = self.resolved_config(app).await?;
+            match self.rd_unrestrict(app, &cfg, &link).await {
+                Ok(result) => match (result.url, result.error) {
+                    (Some(url), _) => resolved.push(url),
+                    (_, Some(error)) => {
+                        tracing::warn!(%error, "failed to unrestrict Real-Debrid link")
+                    }
+                    _ => tracing::warn!("Real-Debrid returned no URL for link"),
+                },
+                Err(error) => tracing::warn!(%error, "failed to unrestrict Real-Debrid link"),
             }
         }
         Ok(resolved)
@@ -384,7 +456,10 @@ fn now_ms() -> i64 {
 fn derive_torrent_filename(url: &str) -> String {
     reqwest::Url::parse(url)
         .ok()
-        .and_then(|u| u.path_segments().and_then(|mut segs| segs.next_back().map(str::to_string)))
+        .and_then(|u| {
+            u.path_segments()
+                .and_then(|mut segs| segs.next_back().map(str::to_string))
+        })
         .filter(|s| !s.is_empty())
         .map(|name| {
             if name.to_lowercase().ends_with(".torrent") {

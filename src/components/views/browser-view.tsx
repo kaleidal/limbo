@@ -161,7 +161,6 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   const guestIdRef = useRef<string | null>(null);
   const guestReadyRef = useRef(false);
   const guestEpochRef = useRef(0);
-  const blockPopupsRef = useRef(false);
   const startUrl = getBrowserSessionUrl(bookmark.id, bookmark.url);
   const [currentUrl, setCurrentUrl] = useState(startUrl);
   const [isLoading, setIsLoading] = useState(false);
@@ -173,8 +172,6 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   const [coverBackdrop, setCoverBackdrop] = useState<string | null>(null);
   const previewRef = useRef<{ id: string; dataUrl: string; capturedAt: number } | null>(null);
   const previewRequestRef = useRef<{ id: string; promise: Promise<string | null> } | null>(null);
-
-  blockPopupsRef.current = blockPopups;
 
   const captureGuestPreview = useCallback((id: string) => {
     const recent = previewRef.current;
@@ -213,14 +210,26 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     let cancelled = false;
     void (async () => {
       if (guestOcclusionDepth <= 0) {
-        await window.sabine?.guest?.setCovered(false).catch(() => undefined);
+        await Promise.race([
+          window.sabine?.guest?.setCovered?.(false).catch(() => undefined),
+          new Promise<void>((resolve) => window.setTimeout(resolve, 1_000)),
+        ]);
+        setCoverBackdrop(null);
         return;
       }
       const id = guestIdRef.current;
       const guestApi = window.sabine?.guest;
-      if (id) await captureGuestPreview(id);
+      if (id) {
+        await Promise.race([
+          captureGuestPreview(id),
+          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 1_000)),
+        ]);
+      }
       if (!cancelled) {
-        await guestApi?.setCovered?.(true).catch(() => undefined);
+        await Promise.race([
+          guestApi?.setCovered?.(true).catch(() => undefined),
+          new Promise<void>((resolve) => window.setTimeout(resolve, 1_000)),
+        ]);
         if (!cancelled) completeGuestOcclusion();
       }
     })();
@@ -302,7 +311,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
           id: guestId,
           url,
           partition: "persist:limbo",
-          popupPolicy: blockPopupsRef.current ? "deny" : "navigateSame",
+          popupPolicy: blockPopups ? "deny" : "navigateSame",
           bounds: {
             x: Math.round(rect.left),
             y: Math.round(rect.top),
@@ -313,13 +322,19 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
           backgroundColor: "#0a0a0a",
         });
         // StrictMode / remount: a newer effect owns the slot — leave its guest alone.
-        if (guestEpochRef.current !== epoch) return;
+        if (guestEpochRef.current !== epoch) {
+          await guestApi.destroy(guestId).catch(() => undefined);
+          return;
+        }
         guestIdRef.current = guestId;
         guestReadyRef.current = true;
         await syncBounds();
         if (useAppStore.getState().guestOcclusionDepth > 0) {
           await captureGuestPreview(guestId);
-          await guestApi.setCovered?.(true).catch(() => undefined);
+          await Promise.race([
+            guestApi.setCovered?.(true).catch(() => undefined),
+            new Promise<void>((resolve) => window.setTimeout(resolve, 1_000)),
+          ]);
           if (guestEpochRef.current === epoch) completeGuestOcclusion();
         } else {
           await guestApi.setCovered?.(false).catch(() => undefined);
@@ -351,6 +366,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   }, [
     bookmark.id,
     bookmark.url,
+    blockPopups,
     captureGuestPreview,
     completeGuestOcclusion,
     getBrowserSessionUrl,
@@ -407,8 +423,13 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       }}
       onUrlSubmit={handleUrlSubmit}
       onOpenExternal={() => {
-        if (currentUrl && window.limbo) {
-          window.limbo.openExternal(currentUrl).catch(() => undefined);
+        if (!window.limbo) return;
+        try {
+          const url = new URL(currentUrl);
+          if (url.protocol !== "http:" && url.protocol !== "https:") return;
+          window.limbo.openExternal(url.href).catch(() => undefined);
+        } catch {
+          return;
         }
       }}
     >

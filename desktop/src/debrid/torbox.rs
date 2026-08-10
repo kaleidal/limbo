@@ -4,7 +4,11 @@ use super::{DebridError, DebridResult};
 
 const BASE: &str = "https://api.torbox.app/v1/api";
 
-pub async fn unrestrict(client: &reqwest::Client, api_key: &str, url: &str) -> Result<DebridResult, DebridError> {
+pub async fn unrestrict(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> Result<DebridResult, DebridError> {
     let form = reqwest::multipart::Form::new().text("link", url.to_string());
     let created: Value = client
         .post(format!("{BASE}/webdl/createwebdownload"))
@@ -15,8 +19,13 @@ pub async fn unrestrict(client: &reqwest::Client, api_key: &str, url: &str) -> R
         .json()
         .await?;
 
-    let ok = created.get("success").and_then(Value::as_bool).unwrap_or(false);
-    let web_id = created.pointer("/data/webdownload_id").and_then(value_as_id);
+    let ok = created
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let web_id = created
+        .pointer("/data/webdownload_id")
+        .and_then(value_as_id);
     let Some(web_id) = web_id.filter(|_| ok) else {
         return Ok(DebridResult {
             url: None,
@@ -95,14 +104,24 @@ pub async fn hosts(client: &reqwest::Client, api_key: &str) -> Result<Vec<String
         .json()
         .await?;
 
-    if !data.get("success").and_then(Value::as_bool).unwrap_or(false) {
-        return Err(DebridError::Message(format!("TorBox: {}", error_message(&data))));
+    if !data
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(DebridError::Message(format!(
+            "TorBox: {}",
+            error_message(&data)
+        )));
     }
 
     let mut hosts: Vec<String> = Vec::new();
     if let Some(arr) = data.get("data").and_then(Value::as_array) {
         for entry in arr {
-            let up = entry.get("status").and_then(Value::as_bool).unwrap_or(false)
+            let up = entry
+                .get("status")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
                 || entry
                     .get("status")
                     .and_then(Value::as_str)
@@ -112,10 +131,10 @@ pub async fn hosts(client: &reqwest::Client, api_key: &str) -> Result<Vec<String
             }
             if let Some(domains) = entry.get("domains").and_then(Value::as_array) {
                 for domain in domains {
-                    if let Some(d) = domain.as_str() {
-                        if d.contains('.') {
-                            hosts.push(d.to_string());
-                        }
+                    if let Some(d) = domain.as_str()
+                        && d.contains('.')
+                    {
+                        hosts.push(d.to_string());
                     }
                 }
             }
@@ -131,29 +150,45 @@ async fn finish_torrent_creation(
     api_key: &str,
     created: Value,
 ) -> Result<Vec<String>, DebridError> {
-    let ok = created.get("success").and_then(Value::as_bool).unwrap_or(false);
+    let ok = created
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let torrent_id = created.pointer("/data/torrent_id").and_then(value_as_id);
     let Some(torrent_id) = torrent_id.filter(|_| ok) else {
-        return Err(DebridError::Message(format!("TorBox: {}", error_message(&created))));
+        return Err(DebridError::Message(format!(
+            "TorBox: {}",
+            error_message(&created)
+        )));
     };
 
     let info = wait_ready(client, api_key, "torrents", torrent_id)
         .await
         .map_err(DebridError::Message)?;
-    let files = info.get("files").and_then(Value::as_array).cloned().unwrap_or_default();
+    let files = info
+        .get("files")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
 
     let mut links = Vec::new();
     for file in files {
-        if let Some(file_id) = file.get("id").and_then(Value::as_i64) {
-            if let Some(link) = request_link(client, api_key, "torrents", torrent_id, Some(file_id)).await? {
-                links.push(link);
-            }
+        if let Some(file_id) = file.get("id").and_then(Value::as_i64)
+            && let Some(link) =
+                request_link(client, api_key, "torrents", torrent_id, Some(file_id)).await?
+        {
+            links.push(link);
         }
     }
     Ok(links)
 }
 
-async fn wait_ready(client: &reqwest::Client, api_key: &str, kind: &str, id: i64) -> Result<Value, String> {
+async fn wait_ready(
+    client: &reqwest::Client,
+    api_key: &str,
+    kind: &str,
+    id: i64,
+) -> Result<Value, String> {
     let mut last_state = String::new();
     for _ in 0..12 {
         let info: Value = client
@@ -174,8 +209,14 @@ async fn wait_ready(client: &reqwest::Client, api_key: &str, kind: &str, id: i64
                 .unwrap_or("")
                 .to_lowercase();
             last_state = state.clone();
-            let finished = entry.get("download_finished").and_then(Value::as_bool).unwrap_or(false)
-                || entry.get("download_present").and_then(Value::as_bool).unwrap_or(false)
+            let finished = entry
+                .get("download_finished")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                || entry
+                    .get("download_present")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
                 || state.contains("cached")
                 || state.contains("completed")
                 || state.contains("uploading");
@@ -198,7 +239,6 @@ fn pick_entry(payload: &Value, id: i64) -> Option<Value> {
         return arr
             .iter()
             .find(|item| item.get("id").and_then(Value::as_i64) == Some(id))
-            .or_else(|| arr.first())
             .cloned();
     }
     Some(data.clone())
@@ -211,7 +251,11 @@ async fn request_link(
     id: i64,
     file_id: Option<i64>,
 ) -> Result<Option<String>, DebridError> {
-    let id_field = if kind == "webdl" { "web_id" } else { "torrent_id" };
+    let id_field = if kind == "webdl" {
+        "web_id"
+    } else {
+        "torrent_id"
+    };
     let mut query = vec![
         ("token".to_string(), api_key.to_string()),
         (id_field.to_string(), id.to_string()),
@@ -228,14 +272,20 @@ async fn request_link(
         .await?
         .json()
         .await?;
-    if !data.get("success").and_then(Value::as_bool).unwrap_or(false) {
+    if !data
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         return Ok(None);
     }
     Ok(data.get("data").and_then(Value::as_str).map(str::to_string))
 }
 
 fn value_as_id(value: &Value) -> Option<i64> {
-    value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse().ok()))
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
 }
 
 fn error_message(payload: &Value) -> String {

@@ -43,16 +43,15 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
         }
         let bytes = app
             .runtime
-            .block_on(async {
-                let response = reqwest::Client::new().get(&url).send().await?;
-                response.error_for_status()?.bytes().await
-            })
-            .map_err(|e: reqwest::Error| BridgeError::new(e.to_string()))?;
+            .block_on(crate::net::fetch_public_bounded(
+                &url,
+                10 * 1024 * 1024,
+                std::time::Duration::from_secs(60),
+            ))
+            .map_err(|error| BridgeError::new(error.to_string()))?
+            .bytes;
         app.runtime
-            .block_on(
-                app.torrent_engine
-                    .add_file_bytes(app.clone(), bytes.to_vec(), None),
-            )
+            .block_on(app.torrent_engine.add_file_bytes(app.clone(), bytes, None))
             .map_err(|e| BridgeError::new(e.to_string()))
             .and_then(ok)
     });
@@ -61,7 +60,7 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
             return err("id required");
         };
         app.runtime
-            .block_on(app.torrent_engine.pause(&id))
+            .block_on(app.torrent_engine.pause(&app, &id))
             .map_err(|e| BridgeError::new(e.to_string()))?;
         ok(json!({ "success": true }))
     });
@@ -70,7 +69,7 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
             return err("id required");
         };
         app.runtime
-            .block_on(app.torrent_engine.resume(&id))
+            .block_on(app.torrent_engine.resume(&app, &id))
             .map_err(|e| BridgeError::new(e.to_string()))?;
         ok(json!({ "success": true }))
     });
@@ -94,7 +93,7 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
         window,
         "limbo.getStreamServerPort",
         app.clone(),
-        |app, _| ok(*app.stream_port.lock()),
+        |app, _| ok(app.torrent_engine.stream_port()),
     );
     window = register(window, "limbo.getTorrentFiles", app.clone(), |app, cmd| {
         let Some(info_hash) = param_str(&cmd.params, "infoHash") else {
@@ -109,7 +108,14 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
         let Some(torrent_id) = torrent_id else {
             return ok(Vec::<Value>::new());
         };
-        let port = *app.stream_port.lock();
+        let port = app.torrent_engine.stream_port();
+        let info_hash = app.store.with(|data| {
+            data.torrents
+                .iter()
+                .find(|torrent| torrent.id == torrent_id)
+                .and_then(|torrent| torrent.info_hash.clone())
+                .unwrap_or_else(|| torrent_id.clone())
+        });
         let files = app
             .torrent_engine
             .list_files(&torrent_id)
@@ -125,7 +131,7 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
                     "downloaded": 0,
                     "progress": 0.0,
                     "streamUrl": if port > 0 {
-                        format!("http://127.0.0.1:{port}/stream/{torrent_id}/{}", file.index)
+                        format!("http://127.0.0.1:{port}/torrents/{info_hash}/stream/{}", file.index)
                     } else {
                         String::new()
                     },
@@ -138,7 +144,7 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
             .store
             .with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
         for id in ids {
-            let _ = app.runtime.block_on(app.torrent_engine.pause(&id));
+            let _ = app.runtime.block_on(app.torrent_engine.pause(&app, &id));
         }
         ok(json!({ "success": true }))
     });
@@ -147,7 +153,7 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
             .store
             .with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
         for id in ids {
-            let _ = app.runtime.block_on(app.torrent_engine.resume(&id));
+            let _ = app.runtime.block_on(app.torrent_engine.resume(&app, &id));
         }
         ok(json!({ "success": true }))
     });

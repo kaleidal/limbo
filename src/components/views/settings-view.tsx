@@ -333,7 +333,8 @@ export function SettingsView() {
               <div>
                 <p className="font-medium">Require VPN for Torrents</p>
                 <p className="text-sm text-neutral-500">
-                  Block torrent downloads when no VPN is detected. Helps protect your privacy.
+                  Check interface names when adding a torrent. This is not a routing check or kill
+                  switch, and IPv6-only VPN interfaces may not be detected.
                 </p>
               </div>
               <Switch
@@ -348,9 +349,27 @@ export function SettingsView() {
             </div>
             <div className="flex items-center justify-between">
               <div>
+                <p className="font-medium">Monitor Clipboard</p>
+                <p className="text-sm text-neutral-500">
+                  Detect copied download and magnet links while Limbo is open. Applied on next
+                  launch.
+                </p>
+              </div>
+              <Switch
+                checked={localSettings.clipboardMonitoring}
+                onCheckedChange={(checked: boolean) =>
+                  setLocalSettings({
+                    ...localSettings,
+                    clipboardMonitoring: checked,
+                  })
+                }
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
                 <p className="font-medium">Companion API</p>
                 <p className="text-sm text-neutral-500">
-                  Let apps like Raffi request torrents and stream over localhost.
+                  Let companion apps manage Limbo torrents over localhost.
                 </p>
               </div>
               <Switch

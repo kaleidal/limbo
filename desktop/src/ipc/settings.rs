@@ -12,14 +12,12 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
     });
     window = register(window, "limbo.updateSettings", app.clone(), |app, cmd| {
         let patch = cmd.params;
+        let settings = app
+            .store
+            .with(|data| serde_json::from_value::<Settings>(merge_settings(&data.settings, &patch)))
+            .map_err(|error| BridgeError::new(format!("invalid settings: {error}")))?;
         app.store
-            .with_mut(|d| {
-                if let Ok(partial) =
-                    serde_json::from_value::<Settings>(merge_settings(&d.settings, &patch))
-                {
-                    d.settings = partial;
-                }
-            })
+            .with_mut(|data| data.settings = settings)
             .map_err(|e| BridgeError::new(e.to_string()))?;
         ok(app.store.with(|d| d.settings.clone()))
     });
@@ -62,16 +60,16 @@ fn merge_settings(current: &Settings, patch: &Value) -> Value {
     let mut value = serde_json::to_value(current).unwrap_or(json!({}));
     if let (Some(obj), Some(patch_obj)) = (value.as_object_mut(), patch.as_object()) {
         for (key, patch_value) in patch_obj {
-            if key == "debrid" {
-                if let (Some(debrid), Some(patch_debrid)) = (
+            if key == "debrid"
+                && let (Some(debrid), Some(patch_debrid)) = (
                     obj.get_mut("debrid").and_then(|v| v.as_object_mut()),
                     patch_value.as_object(),
-                ) {
-                    for (dkey, dval) in patch_debrid {
-                        debrid.insert(dkey.clone(), dval.clone());
-                    }
-                    continue;
+                )
+            {
+                for (dkey, dval) in patch_debrid {
+                    debrid.insert(dkey.clone(), dval.clone());
                 }
+                continue;
             }
             obj.insert(key.clone(), patch_value.clone());
         }
