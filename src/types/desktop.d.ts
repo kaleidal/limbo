@@ -13,6 +13,7 @@ export interface LibraryItem {
   dateAdded: string;
   icon?: string;
   category?: string;
+  trusted?: boolean;
 }
 
 export interface Download {
@@ -174,6 +175,7 @@ export interface LimboAPI {
   // Settings
   getSettings: () => Promise<Settings>;
   updateSettings: (settings: Partial<Settings>) => Promise<Settings>;
+  rotateApiToken: () => Promise<{ success: boolean }>;
   selectDownloadPath: () => Promise<string | null>;
   clearData: () => Promise<{ downloads: Download[]; torrents: TorrentInfo[]; library: LibraryItem[]; settings: Settings }>;
 

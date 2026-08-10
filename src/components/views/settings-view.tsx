@@ -29,6 +29,8 @@ export function SettingsView() {
   const [supportedHosts, setSupportedHosts] = useState<string[]>([]);
   const [hostsLoading, setHostsLoading] = useState(false);
   const [hostsError, setHostsError] = useState<string | null>(null);
+  const [rotatingApiToken, setRotatingApiToken] = useState(false);
+  const [apiTokenStatus, setApiTokenStatus] = useState<"rotated" | "error" | null>(null);
 
   const [rdDevice, setRdDevice] = useState<
     | null
@@ -142,6 +144,23 @@ export function SettingsView() {
       console.error("Failed to clear data:", err);
     } finally {
       setClearing(false);
+    }
+  };
+
+  const handleRotateApiToken = async () => {
+    if (!window.limbo || rotatingApiToken) return;
+    setRotatingApiToken(true);
+    setApiTokenStatus(null);
+    try {
+      await window.limbo.rotateApiToken();
+      const updated = await window.limbo.getSettings();
+      setSettings(updated);
+      setLocalSettings(updated);
+      setApiTokenStatus("rotated");
+    } catch {
+      setApiTokenStatus("error");
+    } finally {
+      setRotatingApiToken(false);
     }
   };
 
@@ -351,11 +370,11 @@ export function SettingsView() {
               <div>
                 <p className="font-medium">Monitor Clipboard</p>
                 <p className="text-sm text-neutral-500">
-                  Detect copied download and magnet links while Limbo is open. Applied on next
-                  launch.
+                  Detect copied download and magnet links while Limbo is open.
                 </p>
               </div>
               <Switch
+                aria-label="Monitor Clipboard"
                 checked={localSettings.clipboardMonitoring}
                 onCheckedChange={(checked: boolean) =>
                   setLocalSettings({
@@ -403,6 +422,33 @@ export function SettingsView() {
                   <p className="text-xs text-neutral-500 mt-1">
                     Default http://127.0.0.1:17890/v1. Auth token is written to Limbo&apos;s api.json.
                   </p>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="font-medium">API Token</p>
+                    <p className="text-sm text-neutral-500">
+                      Rotate the token to revoke access for existing companion clients.
+                    </p>
+                    {apiTokenStatus === "rotated" && (
+                      <p className="text-sm text-emerald-400 mt-1">Token rotated.</p>
+                    )}
+                    {apiTokenStatus === "error" && (
+                      <p className="text-sm text-red-400 mt-1">Token rotation failed.</p>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleRotateApiToken}
+                    disabled={rotatingApiToken}
+                  >
+                    {rotatingApiToken ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    Rotate Token
+                  </Button>
                 </div>
               </>
             )}

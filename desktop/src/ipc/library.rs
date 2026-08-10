@@ -13,14 +13,19 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
         ok(app.store.with(|d| d.library.clone()))
     });
     window = register(window, "limbo.addToLibrary", app.clone(), |app, cmd| {
+        let Some(path) = param_str(&cmd.params, "path") else {
+            return err("path required");
+        };
+        let path = validated_library_path(&app, &path)?;
         let item = LibraryItem {
             id: Uuid::new_v4().to_string(),
             name: param_str(&cmd.params, "name").unwrap_or_else(|| "Item".into()),
-            path: param_str(&cmd.params, "path").unwrap_or_default(),
+            path: path.to_string_lossy().into_owned(),
             size: cmd.params.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
             date_added: chrono::Utc::now().to_rfc3339(),
             icon: param_str(&cmd.params, "icon"),
             category: param_str(&cmd.params, "category"),
+            trusted: true,
         };
         app.store
             .with_mut(|d| d.library.push(item.clone()))
@@ -104,6 +109,7 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
             date_added: chrono::Utc::now().to_rfc3339(),
             icon: None,
             category: Some("folder".into()),
+            trusted: true,
         };
         app.store
             .with_mut(|d| d.library.push(item.clone()))
@@ -129,17 +135,56 @@ fn authorized_path(
     let download_root = Path::new(&download_root)
         .canonicalize()
         .map_err(|error| BridgeError::new(error.to_string()))?;
-    let exact_managed_item = app.store.with(|data| {
-        data.downloads
+    if target == download_root && !allow_library_item {
+        return Err(BridgeError::new("path is outside Limbo's managed files"));
+    }
+    if !target.starts_with(&download_root) {
+        let managed_paths = app.store.with(|data| {
+            let mut paths = data
+                .downloads
+                .iter()
+                .map(|item| item.path.clone())
+                .collect::<Vec<_>>();
+            if allow_library_item {
+                paths.extend(
+                    data.library
+                        .iter()
+                        .filter(|item| item.trusted)
+                        .map(|item| item.path.clone()),
+                );
+            }
+            paths
+        });
+        if !managed_paths
             .iter()
-            .any(|item| Path::new(&item.path).canonicalize().ok().as_ref() == Some(&target))
-            || (allow_library_item
-                && data.library.iter().any(|item| {
-                    Path::new(&item.path).canonicalize().ok().as_ref() == Some(&target)
-                }))
+            .any(|path| Path::new(path).canonicalize().ok().as_ref() == Some(&target))
+        {
+            return Err(BridgeError::new("path is outside Limbo's managed files"));
+        }
+    }
+    Ok(target)
+}
+
+fn validated_library_path(app: &App, requested: &str) -> Result<PathBuf, BridgeError> {
+    let target = Path::new(requested)
+        .canonicalize()
+        .map_err(|error| BridgeError::new(error.to_string()))?;
+    let (download_root, download_paths) = app.store.with(|data| {
+        (
+            data.settings.download_path.clone(),
+            data.downloads
+                .iter()
+                .map(|item| item.path.clone())
+                .collect::<Vec<_>>(),
+        )
     });
-    if (target == download_root && !allow_library_item)
-        || (!target.starts_with(&download_root) && !exact_managed_item)
+    let download_root = Path::new(&download_root)
+        .canonicalize()
+        .map_err(|error| BridgeError::new(error.to_string()))?;
+    if !target.starts_with(download_root)
+        && !download_paths
+            .iter()
+            .any(|path| Path::new(path).canonicalize().ok().as_ref() == Some(&target))
     {
         return Err(BridgeError::new("path is outside Limbo's managed files"));
     }

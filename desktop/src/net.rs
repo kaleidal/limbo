@@ -1,5 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use reqwest::Url;
@@ -26,6 +26,8 @@ pub enum FetchError {
     TooLarge(usize),
     #[error("too many redirects")]
     TooManyRedirects,
+    #[error("fetch deadline exceeded")]
+    Timeout,
     #[error("redirect response did not include a valid location")]
     InvalidRedirect,
 }
@@ -40,13 +42,24 @@ pub async fn fetch_public_bounded(
     timeout: Duration,
 ) -> Result<FetchedResource, FetchError> {
     let mut url = Url::parse(input).map_err(|error| FetchError::InvalidUrl(error.to_string()))?;
+    let deadline = Instant::now() + timeout;
 
     for redirect_count in 0..=MAX_REDIRECTS {
-        let (host, addresses) = resolve_public_destination(&url).await?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(FetchError::Timeout);
+        }
+        let (host, addresses) = tokio::time::timeout(remaining, resolve_public_destination(&url))
+            .await
+            .map_err(|_| FetchError::Timeout)??;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(FetchError::Timeout);
+        }
         let client = reqwest::Client::builder()
             .use_rustls_tls()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(timeout)
+            .connect_timeout(remaining.min(Duration::from_secs(10)))
+            .timeout(remaining)
             .redirect(reqwest::redirect::Policy::none())
             .resolve_to_addrs(&host, &addresses)
             .build()
@@ -147,12 +160,27 @@ fn is_public_ipv6(address: Ipv6Addr) -> bool {
         return is_public_ipv4(address);
     }
     let segments = address.segments();
+    if segments[..6].iter().all(|segment| *segment == 0) {
+        return is_public_ipv4(embedded_ipv4(segments));
+    }
+    if segments[..6] == [0x0064, 0xff9b, 0, 0, 0, 0] {
+        return false;
+    }
     !(address.is_loopback()
         || address.is_unspecified()
         || address.is_multicast()
         || (segments[0] & 0xfe00) == 0xfc00
         || (segments[0] & 0xffc0) == 0xfe80
         || (segments[0] == 0x2001 && segments[1] == 0x0db8))
+}
+
+fn embedded_ipv4(segments: [u16; 8]) -> Ipv4Addr {
+    Ipv4Addr::new(
+        (segments[6] >> 8) as u8,
+        segments[6] as u8,
+        (segments[7] >> 8) as u8,
+        segments[7] as u8,
+    )
 }
 
 #[cfg(test)]
@@ -169,6 +197,9 @@ mod tests {
             "::1",
             "fc00::1",
             "fe80::1",
+            "::10.0.0.1",
+            "64:ff9b::a00:1",
+            "64:ff9b::101:101",
         ] {
             assert!(!is_public_ip(address.parse().unwrap()), "{address}");
         }
@@ -178,5 +209,6 @@ mod tests {
     fn accepts_public_destinations() {
         assert!(is_public_ip("1.1.1.1".parse().unwrap()));
         assert!(is_public_ip("2606:4700:4700::1111".parse().unwrap()));
+        assert!(is_public_ip("::1.1.1.1".parse().unwrap()));
     }
 }

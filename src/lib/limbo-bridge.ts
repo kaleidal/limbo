@@ -149,6 +149,7 @@ export function installLimboBridge() {
 
     getSettings: () => invoke("limbo.getSettings"),
     updateSettings: (settings) => invoke("limbo.updateSettings", { ...settings }),
+    rotateApiToken: () => invoke("limbo.rotateApiToken"),
     selectDownloadPath: () => invoke("limbo.selectDownloadPath"),
     clearData: () => invoke("limbo.clearData"),
 

@@ -38,7 +38,6 @@ pub enum ApiError {
 #[derive(Clone)]
 struct ApiState {
     app: Arc<AppState>,
-    token: String,
 }
 
 pub struct ApiServer;
@@ -54,14 +53,12 @@ impl ApiServer {
 
         if !enabled {
             let _ = std::fs::remove_file(discovery_path(&data_dir));
+            *app.api_port.lock() = None;
             return Ok(None);
         }
 
         let token = ensure_api_token(&app)?;
-        let state = ApiState {
-            app: app.clone(),
-            token: token.clone(),
-        };
+        let state = ApiState { app: app.clone() };
 
         let cors = CorsLayer::new()
             .allow_origin(AllowOrigin::list([
@@ -92,6 +89,8 @@ impl ApiServer {
             };
         let port = listener.local_addr()?.port();
         write_discovery(&data_dir, port, &token)?;
+        *app.api_token.write() = Some(token);
+        *app.api_port.lock() = Some(port);
 
         app.runtime.clone().spawn(async move {
             let _ = axum::serve(listener, router).await;
@@ -101,12 +100,43 @@ impl ApiServer {
     }
 }
 
+impl ApiServer {
+    pub fn rotate_token(app: &AppState) -> Result<(), ApiError> {
+        let _rotation = app.api_rotation.lock();
+        let previous = app.store.with(|data| data.settings.api_token.clone());
+        let token = generate_token()?;
+        let port = *app.api_port.lock();
+        if let Some(port) = port {
+            write_discovery(app.store.data_dir()?, port, &token)?;
+        }
+        let persisted = token.clone();
+        if let Err(error) = app
+            .store
+            .with_mut(|data| data.settings.api_token = Some(persisted))
+        {
+            if let (Some(port), Some(previous)) = (port, previous.as_deref())
+                && let Err(rollback_error) = write_discovery(app.store.data_dir()?, port, previous)
+            {
+                tracing::error!(%rollback_error, "failed to restore API discovery token");
+            }
+            return Err(error.into());
+        }
+        *app.api_token.write() = Some(token);
+        Ok(())
+    }
+}
+
 fn check_auth(headers: &HeaderMap, state: &ApiState) -> bool {
+    let token = state.app.api_token.read();
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| token.trim() == state.token)
+        .map(|candidate| {
+            token
+                .as_deref()
+                .is_some_and(|token| candidate.trim() == token)
+        })
         .unwrap_or(false)
 }
 

@@ -1,6 +1,7 @@
 use sabine::{BridgeError, SabineWindow};
 use serde_json::{Value, json};
 
+use crate::api::ApiServer;
 use crate::os;
 use crate::store::schema::{Settings, StoreData};
 
@@ -16,10 +17,16 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
             .store
             .with(|data| serde_json::from_value::<Settings>(merge_settings(&data.settings, &patch)))
             .map_err(|error| BridgeError::new(format!("invalid settings: {error}")))?;
+        let clipboard_monitoring = settings.clipboard_monitoring;
         app.store
             .with_mut(|data| data.settings = settings)
             .map_err(|e| BridgeError::new(e.to_string()))?;
+        app.set_clipboard_monitoring(clipboard_monitoring);
         ok(app.store.with(|d| d.settings.clone()))
+    });
+    window = register(window, "limbo.rotateApiToken", app.clone(), |app, _| {
+        ApiServer::rotate_token(&app).map_err(|error| BridgeError::new(error.to_string()))?;
+        ok(json!({ "success": true }))
     });
     window = register(window, "limbo.selectDownloadPath", app.clone(), |app, _| {
         let current = app.store.with(|d| d.settings.download_path.clone());
@@ -46,6 +53,8 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
                 d.settings = defaults.settings.clone();
             })
             .map_err(|e| BridgeError::new(e.to_string()))?;
+        app.set_clipboard_monitoring(false);
+        ApiServer::rotate_token(&app).map_err(|error| BridgeError::new(error.to_string()))?;
         ok(json!({
             "downloads": app.download_manager.list(&app),
             "torrents": app.torrent_engine.list(&app),
@@ -60,6 +69,9 @@ fn merge_settings(current: &Settings, patch: &Value) -> Value {
     let mut value = serde_json::to_value(current).unwrap_or(json!({}));
     if let (Some(obj), Some(patch_obj)) = (value.as_object_mut(), patch.as_object()) {
         for (key, patch_value) in patch_obj {
+            if key == "apiToken" {
+                continue;
+            }
             if key == "debrid"
                 && let (Some(debrid), Some(patch_debrid)) = (
                     obj.get_mut("debrid").and_then(|v| v.as_object_mut()),

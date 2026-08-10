@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use crate::state::AppState;
@@ -31,7 +31,7 @@ pub struct ClipboardWatcher {
 }
 
 impl ClipboardWatcher {
-    pub fn start(app: Arc<AppState>, interval: Duration) -> Self {
+    pub fn start(app: Weak<AppState>, interval: Duration) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = stop.clone();
 
@@ -42,13 +42,20 @@ impl ClipboardWatcher {
             let mut last = String::new();
 
             while !stop_flag.load(Ordering::SeqCst) {
-                if let Ok(text) = clipboard.get_text()
+                let text = clipboard.get_text();
+                if stop_flag.load(Ordering::SeqCst) {
+                    break;
+                }
+                if let Ok(text) = text
                     && !text.is_empty()
                     && text != last
                 {
                     last = text.clone();
                     let urls = extract_downloadable_urls(&text);
                     if !urls.is_empty() {
+                        let Some(app) = app.upgrade() else {
+                            break;
+                        };
                         app.push_event(
                             "clipboard-download-detected",
                             serde_json::to_value(&urls).unwrap_or_default(),

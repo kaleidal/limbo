@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use limbo_desktop::api::ApiServer;
 use limbo_desktop::ipc;
-use limbo_desktop::os::clipboard::ClipboardWatcher;
 use limbo_desktop::state::AppState;
 use limbo_desktop::store::Store;
 use sabine::{AutostartEntry, DeepLinkRegistration, SingleInstancePolicy};
@@ -16,7 +15,6 @@ const TITLEBAR_HEIGHT: i32 = 40;
 const WINDOW_CONTROLS_WIDTH: i32 = 144;
 
 static APP_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-static CLIPBOARD_WATCHER: OnceLock<ClipboardWatcher> = OnceLock::new();
 
 fn main() {
     tracing_subscriber::fmt()
@@ -48,6 +46,25 @@ fn configure_window(window: SabineWindow) -> SabineResult<SabineWindow> {
     });
     let app = Arc::new(AppState::new(store, handle).map_err(startup_error)?);
     queue_launch_arguments(&app, std::env::args());
+    app.set_clipboard_monitoring(clipboard_monitoring);
+
+    {
+        let app = Arc::downgrade(&app);
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                let Some(app) = app.upgrade() else {
+                    break;
+                };
+                if app.store.is_dirty()
+                    && let Err(error) = app.store.save()
+                {
+                    tracing::error!(%error, "failed to flush volatile store updates");
+                }
+            }
+        });
+    }
 
     let download_path = app.store.with(|data| data.settings.download_path.clone());
     {
@@ -75,38 +92,33 @@ fn configure_window(window: SabineWindow) -> SabineResult<SabineWindow> {
         });
     }
 
-    if clipboard_monitoring {
-        CLIPBOARD_WATCHER
-            .set(ClipboardWatcher::start(
-                app.clone(),
-                Duration::from_millis(250),
-            ))
-            .map_err(|_| startup_error("clipboard watcher initialized more than once"))?;
-    }
-
     tracing::info!("opening Limbo with Sabine");
+    let window = window
+        .size(1400, 900)
+        .min_size(1000, 700)
+        .frameless()
+        .titlebar_drag_region(TITLEBAR_HEIGHT)
+        .drag_exclusion_region(WindowRegionRect::new(
+            -WINDOW_CONTROLS_WIDTH,
+            0,
+            WINDOW_CONTROLS_WIDTH,
+            TITLEBAR_HEIGHT,
+        ))
+        .deep_link(DeepLinkRegistration::new(APP_ID, ["magnet"]));
+    let window = match std::env::current_exe() {
+        Ok(executable) => window.autostart(AutostartEntry {
+            id: APP_ID.to_string(),
+            name: "Limbo".to_string(),
+            command: executable.to_string_lossy().into_owned(),
+            enabled: start_on_boot,
+        }),
+        Err(error) => {
+            tracing::warn!(%error, "autostart unavailable because executable path could not be resolved");
+            window
+        }
+    };
     Ok(ipc::attach(
         window
-            .size(1400, 900)
-            .min_size(1000, 700)
-            .frameless()
-            .titlebar_drag_region(TITLEBAR_HEIGHT)
-            .drag_exclusion_region(WindowRegionRect::new(
-                -WINDOW_CONTROLS_WIDTH,
-                0,
-                WINDOW_CONTROLS_WIDTH,
-                TITLEBAR_HEIGHT,
-            ))
-            .deep_link(DeepLinkRegistration::new(APP_ID, ["magnet"]))
-            .autostart(AutostartEntry {
-                id: APP_ID.to_string(),
-                name: "Limbo".to_string(),
-                command: std::env::current_exe()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned(),
-                enabled: start_on_boot,
-            })
             .single_instance_id(APP_ID)
             .single_instance(SingleInstancePolicy::FocusExisting)
             .lifecycle_policy(SabineLifecyclePolicy::browser_tab()),

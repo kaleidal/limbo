@@ -94,7 +94,7 @@ Limbo exposes an authenticated localhost HTTP API so companion apps can manage t
 - Progress events: `GET /v1/events` with `Authorization: Bearer <token>`
 - Discovery file under Limbo’s app data directory contains `{ port, token, baseUrl }`
 
-Toggle the API under Settings → Torrent Settings → Companion API.
+Toggle the API or rotate its access token under Settings → Torrent Settings → Companion API.
 
 ## Associations
 

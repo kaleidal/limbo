@@ -73,9 +73,11 @@ impl TorrentEngine {
         download_path: &str,
         state_dir: PathBuf,
     ) -> Result<(), TorrentError> {
-        std::fs::create_dir_all(download_path)
+        tokio::fs::create_dir_all(download_path)
+            .await
             .map_err(|error| TorrentError::Message(error.to_string()))?;
-        std::fs::create_dir_all(&state_dir)
+        tokio::fs::create_dir_all(&state_dir)
+            .await
             .map_err(|error| TorrentError::Message(error.to_string()))?;
         let session = Session::new_with_opts(
             PathBuf::from(download_path),
@@ -115,17 +117,39 @@ impl TorrentEngine {
                 spawn_progress_watcher(app.clone(), record.id, handle.clone());
                 continue;
             }
-            if record.source_type.as_deref() != Some("magnet") || record.magnet_uri.is_empty() {
-                continue;
-            }
+            let add = match record.source_type.as_deref() {
+                Some("magnet") if !record.magnet_uri.is_empty() => {
+                    AddTorrent::from_url(record.magnet_uri.clone())
+                }
+                Some("file") => {
+                    let Some(source) = record.source_value.as_deref() else {
+                        continue;
+                    };
+                    match tokio::fs::read(source).await {
+                        Ok(bytes) => AddTorrent::from_bytes(bytes),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            app.store.with_mut(|data| {
+                                data.torrents.retain(|item| item.id != record.id)
+                            })?;
+                            app.push_event(
+                                "torrent-removed",
+                                serde_json::json!({ "id": record.id }),
+                            );
+                            continue;
+                        }
+                        Err(error) => {
+                            tracing::error!(torrent_id = %record.id, %error, "failed to read torrent source during restore");
+                            continue;
+                        }
+                    }
+                }
+                _ => continue,
+            };
             let opts = AddTorrentOptions {
                 output_folder: Some(record.path.clone()),
                 ..Default::default()
             };
-            match session
-                .add_torrent(AddTorrent::from_url(record.magnet_uri.clone()), Some(opts))
-                .await
-            {
+            match session.add_torrent(add, Some(opts)).await {
                 Ok(response) => {
                     if let Some(handle) = response.into_handle() {
                         self.id_map.lock().insert(record.id.clone(), handle.id());
@@ -248,6 +272,7 @@ impl TorrentEngine {
                 .cloned()
         }) {
             self.id_map.lock().insert(existing.id.clone(), handle.id());
+            spawn_progress_watcher(app, existing.id.clone(), handle);
             return Ok(existing);
         }
 
@@ -258,10 +283,12 @@ impl TorrentEngine {
                 .clone()
                 .ok_or(TorrentError::NotInitialized)?;
             let metainfo_dir = state_dir.join("metainfo");
-            std::fs::create_dir_all(&metainfo_dir)
+            tokio::fs::create_dir_all(&metainfo_dir)
+                .await
                 .map_err(|error| TorrentError::Message(error.to_string()))?;
             let path = metainfo_dir.join(format!("{info_hash}.torrent"));
-            std::fs::write(&path, bytes)
+            tokio::fs::write(&path, bytes)
+                .await
                 .map_err(|error| TorrentError::Message(error.to_string()))?;
             Some(path.to_string_lossy().into_owned())
         } else {
@@ -403,6 +430,12 @@ fn spawn_progress_watcher(app: Arc<AppState>, limbo_id: String, handle: Arc<Mana
     app.runtime.clone().spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
+            if !app
+                .store
+                .with(|data| data.torrents.iter().any(|item| item.id == limbo_id))
+            {
+                break;
+            }
             if handle.is_paused() {
                 continue;
             }
@@ -414,7 +447,8 @@ fn spawn_progress_watcher(app: Arc<AppState>, limbo_id: String, handle: Arc<Mana
             )).unwrap_or((0.0, 0.0, 0));
             let status = if stats.error.is_some() { "error" } else if stats.finished { "completed" } else { "downloading" };
             let progress = if stats.total_bytes > 0 { stats.progress_bytes as f64 / stats.total_bytes as f64 } else { 0.0 };
-            let updated = app.store.with_mut(|data| {
+            let terminal = stats.finished || stats.error.is_some();
+            let update = |data: &mut crate::store::schema::StoreData| {
                 let item = data.torrents.iter_mut().find(|item| item.id == limbo_id)?;
                 item.size = stats.total_bytes;
                 item.downloaded = stats.progress_bytes;
@@ -427,7 +461,12 @@ fn spawn_progress_watcher(app: Arc<AppState>, limbo_id: String, handle: Arc<Mana
                 item.status = status.to_string();
                 item.last_error = stats.error.clone();
                 Some(item.clone())
-            });
+            };
+            let updated = if terminal {
+                app.store.with_mut(update)
+            } else {
+                Ok(app.store.with_mut_volatile(update))
+            };
             let info = match updated {
                 Ok(Some(info)) => info,
                 Ok(None) => break,

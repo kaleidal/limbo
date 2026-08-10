@@ -113,7 +113,8 @@ pub async fn select_files(
         .bearer_auth(api_key)
         .form(&[("files", "all")])
         .send()
-        .await?;
+        .await?
+        .error_for_status()?;
     Ok(())
 }
 

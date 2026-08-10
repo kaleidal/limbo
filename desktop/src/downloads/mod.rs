@@ -263,20 +263,41 @@ fn derive_filename(url: &str) -> String {
 }
 
 fn sanitize_filename(raw: &str) -> String {
-    let candidate = Path::new(raw)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let candidate = raw.rsplit(['/', '\\']).next().unwrap_or_default();
     let cleaned: String = candidate
         .chars()
         .filter(|character| !matches!(character, '/' | '\\' | ':' | '\0'))
         .collect();
     let trimmed = cleaned.trim().trim_matches('.');
-    if trimmed.is_empty() {
+    let stem = trimmed.split('.').next().unwrap_or_default().trim();
+    const WINDOWS_RESERVED_NAMES: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if trimmed.is_empty()
+        || WINDOWS_RESERVED_NAMES
+            .iter()
+            .any(|name| stem.eq_ignore_ascii_case(name))
+    {
         "download".to_string()
     } else {
         trimmed.to_string()
     }
+}
+
+fn update_download_volatile(
+    app: &AppState,
+    id: &str,
+    f: impl FnOnce(&mut Download),
+) -> Option<Download> {
+    app.store.with_mut_volatile(|data| {
+        let item = data
+            .downloads
+            .iter_mut()
+            .find(|download| download.id == id)?;
+        f(item);
+        Some(item.clone())
+    })
 }
 
 fn update_download(app: &AppState, id: &str, f: impl FnOnce(&mut Download)) -> Option<Download> {
@@ -431,7 +452,7 @@ async fn run_download(
                 None
             };
 
-            update_download(app, id, |d| {
+            update_download_volatile(app, id, |d| {
                 d.downloaded = downloaded;
                 d.speed = Some(speed);
                 d.eta = eta;
@@ -469,6 +490,8 @@ mod tests {
         assert_eq!(sanitize_filename("../../secret.txt"), "secret.txt");
         assert_eq!(sanitize_filename("/etc/passwd"), "passwd");
         assert_eq!(sanitize_filename(".."), "download");
-        assert_eq!(sanitize_filename("C:\\temp\\file:name"), "Ctempfilename");
+        assert_eq!(sanitize_filename("C:\\temp\\file:name"), "filename");
+        assert_eq!(sanitize_filename("con.txt"), "download");
+        assert_eq!(sanitize_filename(" LPT9 .log"), "download");
     }
 }
