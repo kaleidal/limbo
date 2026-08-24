@@ -450,6 +450,57 @@ export function SettingsView() {
                     Rotate Token
                   </Button>
                 </div>
+                <div className="flex items-center justify-between gap-4 border-t border-neutral-800 pt-4">
+                  <div>
+                    <p className="font-medium">Ask Before Adding Torrents</p>
+                    <p className="text-sm text-neutral-500">
+                      Show an approval prompt when a companion app requests a torrent.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={localSettings.apiPromptPolicy !== "off"}
+                    onCheckedChange={(checked: boolean) =>
+                      setLocalSettings({
+                        ...localSettings,
+                        apiPromptPolicy: checked ? "always" : "off",
+                      })
+                    }
+                  />
+                </div>
+                {(localSettings.trustedApiClients?.length ?? 0) > 0 && (
+                  <div className="border-t border-neutral-800 pt-4">
+                    <p className="font-medium">Trusted Apps</p>
+                    <p className="mt-1 text-sm text-neutral-500">
+                      These executables can add torrents without asking first.
+                    </p>
+                    <div className="mt-3 divide-y divide-neutral-800">
+                      {localSettings.trustedApiClients?.map((trustKey) => (
+                        <div key={trustKey} className="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
+                          <span className="min-w-0 flex-1 break-all font-mono text-xs text-neutral-300">
+                            {trustKey.startsWith("exe:") ? trustKey.slice(4) : trustKey}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title="Revoke trust"
+                            className="shrink-0 text-neutral-500 hover:text-red-400 active:scale-[0.96]"
+                            onClick={() =>
+                              setLocalSettings({
+                                ...localSettings,
+                                trustedApiClients: localSettings.trustedApiClients?.filter(
+                                  (candidate) => candidate !== trustKey,
+                                ),
+                              })
+                            }
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>

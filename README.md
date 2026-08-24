@@ -97,16 +97,18 @@ Pass `--target portable`, `--target deb`, `--target msi`, or `--target dmg` dire
 
 Limbo exposes an authenticated localhost HTTP API so companion apps can manage torrents without embedding a torrent client.
 
-The API accepts cross-origin requests from any companion app. Health is public; torrent and event endpoints require the bearer token from Limbo's local discovery file.
+The v2 API accepts cross-origin requests from any companion app. Health is public; torrent and event endpoints require the bearer token from Limbo's local discovery file. New torrent requests show an approval prompt by default, with an option to trust the verified executable.
 
 - Health: `GET http://127.0.0.1:17890/v1/health`
 - List torrents: `GET /v1/torrents` with `Authorization: Bearer <token>`
-- Add torrent: `POST /v1/torrents` with `{ "magnet": "..." }` and `Authorization: Bearer <token>`
-- Remove torrent: `DELETE /v1/torrents/:id` with `Authorization: Bearer <token>`
+- Add torrent: `POST /v1/torrents` with `{ "magnet": "...", "fileIndex": 0, "sequential": true, "clientId": "my-app", "clientName": "My App" }` and `Authorization: Bearer <token>`
+- Torrent status: `GET /v1/torrents/:id` with `Authorization: Bearer <token>`
+- Stream: `GET /v1/torrents/:id/stream/:fileIndex?token=<token>` with byte-range support
+- Remove torrent: `DELETE /v1/torrents/:id?deleteFiles=false` with `Authorization: Bearer <token>`
 - Progress events: `GET /v1/events` with `Authorization: Bearer <token>`
 - Discovery file under Limbo’s app data directory contains `{ port, token, baseUrl }`
 
-Toggle the API or rotate its access token under Settings → Torrent Settings → Companion API.
+Toggle the API, configure approval prompts, revoke trusted apps, or rotate the access token under Settings → Torrent Settings → Companion API.
 
 ## Associations
 

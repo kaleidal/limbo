@@ -13,6 +13,14 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
     });
     window = register(window, "limbo.updateSettings", app.clone(), |app, cmd| {
         let patch = cmd.params;
+        let previous_api = app.store.with(|data| {
+            (
+                data.settings.api_enabled.unwrap_or(true),
+                data.settings
+                    .api_port
+                    .unwrap_or(crate::store::schema::DEFAULT_API_PORT),
+            )
+        });
         let settings = app
             .store
             .with(|data| serde_json::from_value::<Settings>(merge_settings(&data.settings, &patch)))
@@ -22,6 +30,19 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
             .with_mut(|data| data.settings = settings)
             .map_err(|e| BridgeError::new(e.to_string()))?;
         app.set_clipboard_monitoring(clipboard_monitoring);
+        let next_api = app.store.with(|data| {
+            (
+                data.settings.api_enabled.unwrap_or(true),
+                data.settings
+                    .api_port
+                    .unwrap_or(crate::store::schema::DEFAULT_API_PORT),
+            )
+        });
+        if previous_api != next_api {
+            app.runtime
+                .block_on(ApiServer::reconfigure(app.clone()))
+                .map_err(|error| BridgeError::new(error.to_string()))?;
+        }
         ok(app.store.with(|d| d.settings.clone()))
     });
     window = register(window, "limbo.rotateApiToken", app.clone(), |app, _| {
@@ -54,7 +75,9 @@ pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
             })
             .map_err(|e| BridgeError::new(e.to_string()))?;
         app.set_clipboard_monitoring(false);
-        ApiServer::rotate_token(&app).map_err(|error| BridgeError::new(error.to_string()))?;
+        app.runtime
+            .block_on(ApiServer::reconfigure(app.clone()))
+            .map_err(|error| BridgeError::new(error.to_string()))?;
         ok(json!({
             "downloads": app.download_manager.list(&app),
             "torrents": app.torrent_engine.list(&app),

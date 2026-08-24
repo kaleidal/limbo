@@ -1,19 +1,24 @@
+pub mod approval;
+mod torrents;
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::{Path as AxumPath, State};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::extract::State;
+use axum::http::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
-use axum::routing::{delete, get};
+use axum::routing::get;
 use base64::Engine;
 use rand::TryRngCore;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tower_http::cors::{Any, CorsLayer};
 
@@ -21,7 +26,7 @@ use crate::state::AppState;
 use crate::store::StoreError;
 use crate::store::schema::DEFAULT_API_PORT;
 
-const API_VERSION: u32 = 1;
+const API_VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -36,7 +41,7 @@ pub enum ApiError {
 }
 
 #[derive(Clone)]
-struct ApiState {
+pub(super) struct ApiState {
     app: Arc<AppState>,
 }
 
@@ -44,6 +49,7 @@ pub struct ApiServer;
 
 impl ApiServer {
     pub async fn start(app: Arc<AppState>, data_dir: PathBuf) -> Result<Option<u16>, ApiError> {
+        Self::stop(&app, &data_dir).await;
         let (enabled, preferred_port) = app.store.with(|d| {
             (
                 d.settings.api_enabled.unwrap_or(true),
@@ -60,20 +66,7 @@ impl ApiServer {
         let token = ensure_api_token(&app)?;
         let state = ApiState { app: app.clone() };
 
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST, Method::DELETE])
-            .allow_headers([
-                axum::http::header::AUTHORIZATION,
-                axum::http::header::CONTENT_TYPE,
-            ]);
-        let router = Router::new()
-            .route("/v1/health", get(health))
-            .route("/v1/torrents", get(list_torrents).post(add_torrent))
-            .route("/v1/torrents/{id}", delete(remove_torrent))
-            .route("/v1/events", get(events))
-            .layer(cors)
-            .with_state(state);
+        let router = build_router(state);
 
         let listener =
             match TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], preferred_port))).await {
@@ -88,12 +81,71 @@ impl ApiServer {
         *app.api_token.write() = Some(token);
         *app.api_port.lock() = Some(port);
 
-        app.runtime.clone().spawn(async move {
-            let _ = axum::serve(listener, router).await;
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        *app.api_shutdown.lock() = Some(shutdown_sender);
+        let task = app.runtime.clone().spawn(async move {
+            if let Err(error) = axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_receiver.await;
+            })
+            .await
+            {
+                tracing::error!(%error, "companion API stopped unexpectedly");
+            }
         });
+        *app.api_task.lock().await = Some(task);
 
         Ok(Some(port))
     }
+
+    pub async fn reconfigure(app: Arc<AppState>) -> Result<Option<u16>, ApiError> {
+        let data_dir = app.store.data_dir()?.to_path_buf();
+        Self::start(app, data_dir).await
+    }
+
+    async fn stop(app: &AppState, data_dir: &Path) {
+        if let Some(shutdown) = app.api_shutdown.lock().take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(mut task) = app.api_task.lock().await.take()
+            && tokio::time::timeout(Duration::from_secs(2), &mut task)
+                .await
+                .is_err()
+        {
+            task.abort();
+            let _ = task.await;
+        }
+        *app.api_port.lock() = None;
+        let _ = std::fs::remove_file(discovery_path(data_dir));
+    }
+}
+
+fn build_router(state: ApiState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any)
+        .expose_headers([ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE]);
+    Router::new()
+        .route("/v1/health", get(health))
+        .route(
+            "/v1/torrents",
+            get(torrents::list_torrents).post(torrents::add_torrent),
+        )
+        .route(
+            "/v1/torrents/{id}",
+            get(torrents::get_torrent).delete(torrents::remove_torrent),
+        )
+        .route(
+            "/v1/torrents/{id}/stream/{file_index}",
+            get(torrents::stream_torrent).head(torrents::stream_torrent),
+        )
+        .route("/v1/events", get(events))
+        .layer(cors)
+        .with_state(state)
 }
 
 impl ApiServer {
@@ -122,7 +174,7 @@ impl ApiServer {
     }
 }
 
-fn check_auth(headers: &HeaderMap, state: &ApiState) -> bool {
+pub(super) fn check_auth(headers: &HeaderMap, state: &ApiState) -> bool {
     let token = state.app.api_token.read();
     headers
         .get(axum::http::header::AUTHORIZATION)
@@ -136,7 +188,7 @@ fn check_auth(headers: &HeaderMap, state: &ApiState) -> bool {
         .unwrap_or(false)
 }
 
-fn unauthorized() -> Response {
+pub(super) fn unauthorized() -> Response {
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({ "error": "Unauthorized" })),
@@ -144,93 +196,15 @@ fn unauthorized() -> Response {
         .into_response()
 }
 
-async fn health() -> Json<Value> {
+async fn health(State(state): State<ApiState>) -> Json<Value> {
     Json(json!({
         "ok": true,
         "service": "limbo",
         "version": env!("CARGO_PKG_VERSION"),
         "apiVersion": API_VERSION,
+        "torrentReady": state.app.torrent_engine.is_ready(),
         "apiTokenRequired": true,
     }))
-}
-
-async fn list_torrents(State(state): State<ApiState>, headers: HeaderMap) -> Response {
-    if !check_auth(&headers, &state) {
-        return unauthorized();
-    }
-    let torrents = state.app.store.with(|d| d.torrents.clone());
-    Json(json!({ "torrents": torrents })).into_response()
-}
-
-#[derive(Debug, Deserialize)]
-struct AddTorrentBody {
-    #[serde(default)]
-    magnet: Option<String>,
-    #[serde(default, rename = "magnetUri")]
-    magnet_uri: Option<String>,
-}
-
-async fn add_torrent(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    Json(body): Json<AddTorrentBody>,
-) -> Response {
-    if !check_auth(&headers, &state) {
-        return unauthorized();
-    }
-
-    let magnet = body
-        .magnet
-        .or(body.magnet_uri)
-        .filter(|m| m.starts_with("magnet:"));
-    let Some(magnet) = magnet else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "magnet is required" })),
-        )
-            .into_response();
-    };
-
-    match state
-        .app
-        .torrent_engine
-        .add_magnet(state.app.clone(), magnet, None)
-        .await
-    {
-        Ok(info) => (
-            StatusCode::CREATED,
-            Json(serde_json::to_value(info).unwrap_or(Value::Null)),
-        )
-            .into_response(),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": err.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-async fn remove_torrent(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    AxumPath(id): AxumPath<String>,
-) -> Response {
-    if !check_auth(&headers, &state) {
-        return unauthorized();
-    }
-    match state
-        .app
-        .torrent_engine
-        .remove(&state.app, &id, false)
-        .await
-    {
-        Ok(()) => Json(json!({ "ok": true })).into_response(),
-        Err(err) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": err.to_string() })),
-        )
-            .into_response(),
-    }
 }
 
 async fn events(
@@ -245,7 +219,13 @@ async fn events(
     let stream =
         tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(1)))
             .map(move |_| {
-                let torrents = app.store.with(|d| d.torrents.clone());
+                let state = ApiState { app: app.clone() };
+                let torrents = app
+                    .torrent_engine
+                    .list(&app)
+                    .into_iter()
+                    .filter_map(|torrent| torrents::status_for(&state, torrent).ok())
+                    .collect::<Vec<_>>();
                 let event = Event::default()
                     .event("progress")
                     .json_data(json!({ "torrents": torrents }))
@@ -318,4 +298,41 @@ fn token_is_strong(token: &str) -> bool {
         }
     }
     distinct_count >= 12
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    use super::{ApiState, build_router};
+    use crate::state::AppState;
+    use crate::store::Store;
+
+    #[tokio::test]
+    async fn single_torrent_get_is_registered() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = Arc::new(
+            AppState::new(
+                Store::load(directory.path()).unwrap(),
+                tokio::runtime::Handle::current(),
+            )
+            .unwrap(),
+        );
+        *app.api_token.write() = Some("test-token".to_string());
+        let response = build_router(ApiState { app })
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/torrents/missing")
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }

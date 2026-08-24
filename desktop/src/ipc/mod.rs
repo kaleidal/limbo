@@ -66,6 +66,22 @@ pub fn attach(window: SabineWindow, app: Arc<AppState>) -> SabineWindow {
         }
     });
 
+    window = register(
+        window,
+        "limbo.decideApiApproval",
+        app.clone(),
+        |app, cmd| {
+            let Some(request_id) = param_str(&cmd.params, "requestId") else {
+                return ok(json!({ "accepted": false }));
+            };
+            let decision = serde_json::from_value(cmd.params.clone())
+                .map_err(|error| BridgeError::new(format!("invalid approval decision: {error}")))?;
+            ok(json!({
+                "accepted": app.approvals.decide(&request_id, decision),
+            }))
+        },
+    );
+
     window = bookmarks::attach(window, app.clone());
     window = library::attach(window, app.clone());
     window = downloads::attach(window, app.clone());

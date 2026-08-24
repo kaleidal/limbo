@@ -5,7 +5,10 @@ use std::time::Duration;
 use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 use tokio::runtime::Handle;
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
+use tokio::task::JoinHandle;
 
+use crate::api::approval::ApprovalManager;
 use crate::debrid::DebridService;
 use crate::downloads::DownloadManager;
 use crate::os::clipboard::ClipboardWatcher;
@@ -22,6 +25,9 @@ pub struct AppState {
     pub api_token: RwLock<Option<String>>,
     pub api_port: Mutex<Option<u16>>,
     pub api_rotation: Mutex<()>,
+    pub api_shutdown: Mutex<Option<oneshot::Sender<()>>>,
+    pub api_task: AsyncMutex<Option<JoinHandle<()>>>,
+    pub approvals: ApprovalManager,
     clipboard_watcher: Mutex<Option<ClipboardWatcher>>,
 }
 
@@ -39,6 +45,9 @@ impl AppState {
             api_token: RwLock::new(None),
             api_port: Mutex::new(None),
             api_rotation: Mutex::new(()),
+            api_shutdown: Mutex::new(None),
+            api_task: AsyncMutex::new(None),
+            approvals: ApprovalManager::default(),
             clipboard_watcher: Mutex::new(None),
         })
     }

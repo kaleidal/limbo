@@ -119,6 +119,10 @@ pub struct Settings {
     pub api_port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_token: Option<String>,
+    #[serde(default = "default_api_prompt_policy")]
+    pub api_prompt_policy: String,
+    #[serde(default)]
+    pub trusted_api_clients: Vec<String>,
     pub debrid: DebridSettings,
 }
 
@@ -145,9 +149,15 @@ impl Default for Settings {
             api_enabled: Some(true),
             api_port: Some(DEFAULT_API_PORT),
             api_token: Some(String::new()),
+            api_prompt_policy: default_api_prompt_policy(),
+            trusted_api_clients: Vec::new(),
             debrid: DebridSettings::default(),
         }
     }
+}
+
+fn default_api_prompt_policy() -> String {
+    "always".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

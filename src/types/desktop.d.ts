@@ -52,6 +52,8 @@ export interface Settings {
   apiEnabled?: boolean;
   apiPort?: number;
   apiToken?: string;
+  apiPromptPolicy?: "always" | "off";
+  trustedApiClients?: string[];
   debrid: {
     service: "realdebrid" | "alldebrid" | "premiumize" | "torbox" | null;
     apiKey: string;
@@ -65,6 +67,25 @@ export interface Settings {
 export interface BrowserDownloadRequest {
   url: string;
   filename: string;
+}
+
+export interface ApiApprovalRequest {
+  requestId: string;
+  clientId: string;
+  clientName: string;
+  clientVersion?: string;
+  clientIconDataUrl?: string;
+  magnet: string;
+  displayName: string;
+  fileIndex: number | null;
+  sequential: boolean;
+  verified: {
+    pid: number | null;
+    exePath: string | null;
+    displayName: string | null;
+    trustKey: string | null;
+    method: "tcp-peer" | "unknown";
+  };
 }
 
 export interface TorrentInfo {
@@ -178,6 +199,7 @@ export interface LimboAPI {
   rotateApiToken: () => Promise<{ success: boolean }>;
   selectDownloadPath: () => Promise<string | null>;
   clearData: () => Promise<{ downloads: Download[]; torrents: TorrentInfo[]; library: LibraryItem[]; settings: Settings }>;
+  decideApiApproval: (requestId: string, approved: boolean, remember: boolean) => Promise<{ accepted: boolean }>;
 
   // Events
   onDownloadStarted: (callback: (download: Download) => void) => () => void;
@@ -193,6 +215,8 @@ export interface LimboAPI {
   onMagnetLinkOpened: (callback: (magnetUri: string) => void) => () => void;
   onTorrentFileOpened: (callback: (filePath: string) => void) => () => void;
   onBrowserDownloadRequested: (callback: (request: BrowserDownloadRequest) => void) => () => void;
+  onApiApprovalRequested: (callback: (request: ApiApprovalRequest) => void) => () => void;
+  onApiApprovalExpired: (callback: (data: { requestId: string }) => void) => () => void;
 }
 
 declare global {

@@ -8,7 +8,7 @@ use librqbit::api::TorrentIdOrHash;
 use librqbit::http_api::{HttpApi, HttpApiOptions};
 use librqbit::{
     AddTorrent, AddTorrentOptions, Api, ManagedTorrent, Session, SessionOptions,
-    SessionPersistenceConfig,
+    SessionPersistenceConfig, TorrentStats,
 };
 use parking_lot::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
@@ -40,6 +40,13 @@ pub struct TorrentFile {
     pub index: usize,
     pub name: String,
     pub length: u64,
+}
+
+pub struct CompanionTorrentOptions {
+    pub name: Option<String>,
+    pub selected_file_index: Option<usize>,
+    pub client_id: Option<String>,
+    pub client_name: Option<String>,
 }
 
 pub struct TorrentEngine {
@@ -200,6 +207,10 @@ impl TorrentEngine {
         self.stream_port.load(Ordering::Acquire)
     }
 
+    pub fn is_ready(&self) -> bool {
+        self.session.lock().is_some() && self.stream_port() > 0
+    }
+
     pub fn list(&self, app: &AppState) -> Vec<TorrentInfo> {
         app.store.with(|data| data.torrents.clone())
     }
@@ -216,6 +227,7 @@ impl TorrentEngine {
             magnet_uri,
             name,
             true,
+            None,
             None,
         )
         .await
@@ -234,8 +246,45 @@ impl TorrentEngine {
             name,
             false,
             Some(bytes),
+            None,
         )
         .await
+    }
+
+    pub async fn add_companion_magnet(
+        &self,
+        app: Arc<AppState>,
+        magnet_uri: String,
+        options: CompanionTorrentOptions,
+    ) -> Result<TorrentInfo, TorrentError> {
+        let requested_name = options.name.clone();
+        let info = self
+            .add(
+                app.clone(),
+                AddTorrent::from_url(magnet_uri.clone()),
+                magnet_uri,
+                options.name,
+                true,
+                None,
+                options.selected_file_index.map(|index| vec![index]),
+            )
+            .await?;
+        app.store.with_mut(|data| {
+            let item = data
+                .torrents
+                .iter_mut()
+                .find(|item| item.id == info.id)
+                .ok_or_else(|| TorrentError::NotFound(info.id.clone()))?;
+            item.selected_file_index = options.selected_file_index.map(|index| index as i64);
+            item.client_id = options.client_id;
+            item.client_name = options.client_name;
+            if let Some(name) = requested_name {
+                item.name = name;
+                item.client_provided_name = Some(true);
+            }
+            item.keep_alive = Some(true);
+            Ok::<_, TorrentError>(item.clone())
+        })?
     }
 
     async fn add(
@@ -246,6 +295,7 @@ impl TorrentEngine {
         name: Option<String>,
         is_magnet: bool,
         source_bytes: Option<Vec<u8>>,
+        only_files: Option<Vec<usize>>,
     ) -> Result<TorrentInfo, TorrentError> {
         let _guard = self.add_lock.lock().await;
         let session = self.session()?;
@@ -255,6 +305,7 @@ impl TorrentEngine {
                 add,
                 Some(AddTorrentOptions {
                     output_folder: Some(download_path.clone()),
+                    only_files,
                     ..Default::default()
                 }),
             )
@@ -271,8 +322,14 @@ impl TorrentEngine {
                 .find(|item| item.info_hash.as_deref() == Some(&info_hash))
                 .cloned()
         }) {
-            self.id_map.lock().insert(existing.id.clone(), handle.id());
-            spawn_progress_watcher(app, existing.id.clone(), handle);
+            let watcher_needed = self
+                .id_map
+                .lock()
+                .insert(existing.id.clone(), handle.id())
+                .is_none();
+            if watcher_needed {
+                spawn_progress_watcher(app, existing.id.clone(), handle);
+            }
             return Ok(existing);
         }
 
@@ -384,6 +441,12 @@ impl TorrentEngine {
         Ok(())
     }
 
+    pub fn get(&self, app: &AppState, id: &str) -> Result<TorrentInfo, TorrentError> {
+        app.store
+            .with(|data| data.torrents.iter().find(|item| item.id == id).cloned())
+            .ok_or_else(|| TorrentError::NotFound(id.to_string()))
+    }
+
     pub fn list_files(&self, id: &str) -> Result<Vec<TorrentFile>, TorrentError> {
         let session = self.session()?;
         let handle = self.handle_for(&session, id)?;
@@ -401,6 +464,58 @@ impl TorrentEngine {
                 length: file.len,
             })
             .collect())
+    }
+
+    pub fn stream(
+        &self,
+        id: &str,
+        file_index: usize,
+    ) -> Result<
+        (
+            impl tokio::io::AsyncRead + tokio::io::AsyncSeek + Unpin + Send + 'static,
+            u64,
+        ),
+        TorrentError,
+    > {
+        let session = self.session()?;
+        let stream = self
+            .handle_for(&session, id)?
+            .stream(file_index)
+            .map_err(|error| TorrentError::Message(error.to_string()))?;
+        let length = stream.len();
+        Ok((stream, length))
+    }
+
+    pub fn stats(&self, id: &str) -> Result<TorrentStats, TorrentError> {
+        let session = self.session()?;
+        Ok(self.handle_for(&session, id)?.stats())
+    }
+
+    pub fn prime_file(&self, id: &str, file_index: usize, bytes: u64) -> Result<(), TorrentError> {
+        let (mut stream, length) = self.stream(id, file_index)?;
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+
+            let mut remaining = bytes.min(length);
+            let mut buffer = vec![0_u8; 64 * 1024];
+            while remaining > 0 {
+                let count = buffer.len().min(remaining as usize);
+                match stream.read(&mut buffer[..count]).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => remaining -= read as u64,
+                }
+            }
+        });
+        Ok(())
+    }
+
+    pub async fn select_file(&self, id: &str, file_index: usize) -> Result<(), TorrentError> {
+        let session = self.session()?;
+        let handle = self.handle_for(&session, id)?;
+        session
+            .update_only_files(&handle, &[file_index].into_iter().collect())
+            .await?;
+        Ok(())
     }
 
     fn session(&self) -> Result<Arc<Session>, TorrentError> {

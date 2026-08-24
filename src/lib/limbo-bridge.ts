@@ -152,6 +152,8 @@ export function installLimboBridge() {
     rotateApiToken: () => invoke("limbo.rotateApiToken"),
     selectDownloadPath: () => invoke("limbo.selectDownloadPath"),
     clearData: () => invoke("limbo.clearData"),
+    decideApiApproval: (requestId, approved, remember) =>
+      invoke("limbo.decideApiApproval", { requestId, approved, remember }),
 
     onDownloadStarted: (callback) => subscribe("download-started", callback as (payload: unknown) => void),
     onDownloadProgress: (callback) => subscribe("download-progress", callback as (payload: unknown) => void),
@@ -168,6 +170,10 @@ export function installLimboBridge() {
     onTorrentFileOpened: (callback) => subscribe("torrent-file-opened", callback as (payload: unknown) => void),
     onBrowserDownloadRequested: (callback) =>
       subscribe("browser-download-requested", callback as (payload: unknown) => void),
+    onApiApprovalRequested: (callback) =>
+      subscribe("api-approval-requested", callback as (payload: unknown) => void),
+    onApiApprovalExpired: (callback) =>
+      subscribe("api-approval-expired", callback as (payload: unknown) => void),
   };
 
   startEventPolling();

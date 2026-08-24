@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "limbo"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2904,6 +2904,7 @@ dependencies = [
  "futures-util",
  "if-addrs",
  "librqbit",
+ "mime_guess",
  "open",
  "parking_lot",
  "rand 0.9.5",
@@ -2916,6 +2917,8 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-stream",
+ "tokio-util",
+ "tower",
  "tower-http 0.7.0",
  "tracing",
  "tracing-subscriber",
