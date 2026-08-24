@@ -12,3 +12,10 @@ dist = "web-dist"
 entry = "web-dist/index.html"
 dev_port = 5177
 build = "bun run build"
+
+[updates]
+provider = "github"
+repository = "kaleidal/limbo"
+channel = "stable"
+policy = "automatic"
+public_key = "o1pDFQMTOdCASk1SfVCv1J5e7IOEctN2hDCpgTseMxk="

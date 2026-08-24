@@ -27,6 +27,14 @@ Limbo is a general-purpose download and organization tool. It supports direct do
 
 Users are solely responsible for ensuring they have the legal right to access, download, and possess any content used with this application. Limbo does not host or provide infringing content.
 
+## Download
+
+Download the latest Limbo release from [GitHub Releases](https://github.com/kaleidal/limbo/releases/latest). Packages are available for Windows, Intel and Apple Silicon Macs, and x86-64 Linux.
+
+These initial packages are not yet signed with Apple or Microsoft developer certificates. Windows may show a SmartScreen warning. On macOS, allow Limbo from **System Settings → Privacy & Security** after the first launch attempt. Linux packages do not require an application-signing certificate.
+
+Limbo installs and maintains its shared Sabine Chromium runtime on first launch, so the initial startup requires an internet connection.
+
 ## Development
 
 ### Prerequisites
@@ -35,10 +43,10 @@ Users are solely responsible for ensuring they have the legal right to access, d
 - Rust (stable, 1.89+)
 - Sabine CLI
 
-Install the latest Sabine tools:
+Install the matching Sabine tools:
 
 ```bash
-cargo install --git https://github.com/Lantharos/Sabine sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.0 sabine-cli
 ```
 
 ### Install
