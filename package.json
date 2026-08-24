@@ -1,17 +1,19 @@
 {
   "name": "limbo",
   "private": true,
-  "version": "1.4.1",
+  "version": "1.4.0",
   "description": "A software manager with integrated browser, download manager, torrent client, and companion API for apps like Raffi",
   "type": "module",
   "author": {
     "name": "Kaleidal",
     "email": "hello@kaleid.al"
   },
-  "homepage": "https://limbo.al",
+  "homepage": "https://limbo.kaleid.al",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:marketing": "tsc -p tsconfig.marketing.json && vite build --config vite.marketing.config.ts",
+    "deploy:marketing": "bun run build:marketing && wrangler deploy",
     "generate-icons": "bunx tsx scripts/generate-icons.ts",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -49,6 +51,7 @@
     "to-ico": "^1.1.5",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5"
+    "vite": "^8.1.5",
+    "wrangler": "^4.125.0"
   }
 }

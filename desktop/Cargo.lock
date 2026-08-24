@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "limbo"
-version = "1.4.1"
+version = "1.4.0"
 dependencies = [
  "anyhow",
  "arboard",

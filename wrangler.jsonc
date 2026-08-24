@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "limbo-marketing",
+  "account_id": "ab780d52c6d4df0c826897411f1558e0",
+  "compatibility_date": "2026-08-24",
+  "assets": {
+    "directory": "./marketing-dist",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    {
+      "pattern": "limbo.kaleid.al",
+      "custom_domain": true
+    }
+  ]
+}

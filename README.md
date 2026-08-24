@@ -31,6 +31,8 @@ Users are solely responsible for ensuring they have the legal right to access, d
 
 Download the latest Limbo release from [GitHub Releases](https://github.com/kaleidal/limbo/releases/latest). Packages are available for Windows, Intel and Apple Silicon Macs, and x86-64 Linux.
 
+The public website is [limbo.kaleid.al](https://limbo.kaleid.al).
+
 These initial packages are not yet signed with Apple or Microsoft developer certificates. Windows may show a SmartScreen warning. On macOS, allow Limbo from **System Settings → Privacy & Security** after the first launch attempt. Linux packages do not require an application-signing certificate.
 
 Limbo installs and maintains its shared Sabine Chromium runtime on first launch, so the initial startup requires an internet connection.
