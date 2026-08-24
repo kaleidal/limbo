@@ -22,7 +22,7 @@ axum = "0.8.9"
 base64 = "0.22.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 directories = "6.0.0"
-sabine = { git = "https://github.com/Lantharos/Sabine.git", tag = "v0.1.1" }
+sabine = { git = "https://github.com/Lantharos/Sabine.git", tag = "v0.1.2" }
 futures-util = "0.3.33"
 if-addrs = "0.15.0"
 librqbit = { version = "8.1.1", features = ["http-api", "tracing-subscriber-utils"] }
