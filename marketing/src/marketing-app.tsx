@@ -1,18 +1,66 @@
 import { ArrowDownToLine, ArrowRight, CodeXml, Library, Link2, Magnet, MonitorDown } from "lucide-react"
+import { useEffect, useState } from "react"
 
 import previewUrl from "../../preview.png"
 
 const releaseRoot = "https://github.com/kaleidal/limbo/releases/latest"
-const downloadRoot = `${releaseRoot}/download`
+const releaseApi = "https://api.github.com/repos/kaleidal/limbo/releases/latest"
 
-const downloads = {
-  windows: `${downloadRoot}/al.kaleid.limbo-1.4.2-msi-windows-x86_64-msi.msi`,
-  macArm: `${downloadRoot}/al.kaleid.limbo-1.4.2-dmg-macos-aarch64-dmg.dmg`,
-  macIntel: `${downloadRoot}/al.kaleid.limbo-1.4.2-dmg-macos-x86_64-dmg.dmg`,
-  linux: `${downloadRoot}/al.kaleid.limbo-1.4.2-appimage-linux-x86_64-appimage.AppImage`,
+type Downloads = {
+  windows: string
+  macArm: string
+  macIntel: string
+  linux: string
 }
 
-function preferredDownload() {
+type LatestRelease = {
+  version: string
+  downloads: Downloads
+}
+
+type GitHubRelease = {
+  tag_name: string
+  html_url: string
+  assets: Array<{ name: string; browser_download_url: string }>
+}
+
+const releaseFallback: LatestRelease = {
+  version: "latest",
+  downloads: {
+    windows: releaseRoot,
+    macArm: releaseRoot,
+    macIntel: releaseRoot,
+    linux: releaseRoot,
+  },
+}
+
+let latestReleaseRequest: Promise<LatestRelease> | undefined
+
+function latestRelease() {
+  latestReleaseRequest ??= fetch(releaseApi, {
+    headers: { Accept: "application/vnd.github+json" },
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`GitHub release lookup failed (${response.status})`)
+    const release = (await response.json()) as GitHubRelease
+    const asset = (suffix: string) => {
+      const match = release.assets.find(({ name }) => name.endsWith(suffix))
+      if (!match) throw new Error(`Latest Limbo release is missing ${suffix}`)
+      return match.browser_download_url
+    }
+    return {
+      version: release.tag_name.replace(/^v/, ""),
+      downloads: {
+        windows: asset("-msi-windows-x86_64-msi.msi"),
+        macArm: asset("-dmg-macos-aarch64-dmg.dmg"),
+        macIntel: asset("-dmg-macos-x86_64-dmg.dmg"),
+        linux: asset("-appimage-linux-x86_64-appimage.AppImage"),
+      },
+    }
+  })
+  return latestReleaseRequest
+}
+
+function preferredDownload(downloads: Downloads) {
   if (typeof navigator === "undefined") return { label: "Download Limbo", href: releaseRoot }
   const platform = `${navigator.userAgent} ${navigator.platform}`.toLowerCase()
   if (platform.includes("windows")) return { label: "Download for Windows", href: downloads.windows }
@@ -28,7 +76,21 @@ const flow = [
 ]
 
 export function MarketingApp() {
-  const primary = preferredDownload()
+  const [release, setRelease] = useState(releaseFallback)
+
+  useEffect(() => {
+    let current = true
+    void latestRelease().then(
+      (latest) => current && setRelease(latest),
+      () => undefined,
+    )
+    return () => {
+      current = false
+    }
+  }, [])
+
+  const { downloads } = release
+  const primary = preferredDownload(downloads)
 
   return (
     <div className="site-shell">
@@ -59,7 +121,7 @@ export function MarketingApp() {
                 View source
               </a>
             </div>
-            <p className="release-note">Limbo 1.4.2 · Windows, macOS, and Linux</p>
+            <p className="release-note">Limbo {release.version} · Windows, macOS, and Linux</p>
           </div>
 
           <div className="product-stage" aria-label="Limbo desktop application preview">
