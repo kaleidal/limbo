@@ -1,7 +1,7 @@
 {
   "name": "limbo",
   "private": true,
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "A software manager with integrated browser, download manager, torrent client, and companion API for apps like Raffi",
   "type": "module",
   "author": {

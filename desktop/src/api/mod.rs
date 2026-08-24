@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Path as AxumPath, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{delete, get};
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio_stream::{Stream, StreamExt};
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::state::AppState;
 use crate::store::StoreError;
@@ -61,11 +61,7 @@ impl ApiServer {
         let state = ApiState { app: app.clone() };
 
         let cors = CorsLayer::new()
-            .allow_origin(AllowOrigin::list([
-                HeaderValue::from_static("null"),
-                HeaderValue::from_static("http://localhost:5177"),
-                HeaderValue::from_static("http://127.0.0.1:5177"),
-            ]))
+            .allow_origin(Any)
             .allow_methods([Method::GET, Method::POST, Method::DELETE])
             .allow_headers([
                 axum::http::header::AUTHORIZATION,

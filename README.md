@@ -97,6 +97,8 @@ Pass `--target portable`, `--target deb`, `--target msi`, or `--target dmg` dire
 
 Limbo exposes an authenticated localhost HTTP API so companion apps can manage torrents without embedding a torrent client.
 
+The API accepts cross-origin requests from any companion app. Health is public; torrent and event endpoints require the bearer token from Limbo's local discovery file.
+
 - Health: `GET http://127.0.0.1:17890/v1/health`
 - List torrents: `GET /v1/torrents` with `Authorization: Bearer <token>`
 - Add torrent: `POST /v1/torrents` with `{ "magnet": "..." }` and `Authorization: Bearer <token>`
