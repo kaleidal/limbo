@@ -76,8 +76,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .platforms svg { width: 20px; }
 .unsigned-note { margin: 23px 0 0; font-size: 12px; opacity: .7; }
 
-footer { min-height: 190px; display: grid; grid-template-columns: .5fr 1fr auto; align-items: center; gap: 50px; }
-footer p { max-width: 520px; margin: 0; color: #696969; font-size: 12px; line-height: 1.7; }
+footer { min-height: 190px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 50px; }
+footer p { justify-self: center; margin: 0; color: #696969; font-size: 12px; line-height: 1.7; white-space: nowrap; }
 footer > a { display: inline-flex; align-items: center; gap: 8px; color: #a3a3a3; font-size: 13px; }
 footer > a svg { width: 15px; }
 
@@ -101,6 +101,7 @@ footer > a svg { width: 15px; }
   .download-lead { grid-template-columns: 1fr; align-items: start; gap: 25px; }
   .download h2 { white-space: normal; }
   footer { padding: 54px 0; grid-template-columns: 1fr; gap: 25px; }
+  footer p { justify-self: start; white-space: normal; }
 }
 
 @media (max-width: 520px) {

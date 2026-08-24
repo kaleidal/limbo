@@ -6,10 +6,10 @@ const releaseRoot = "https://github.com/kaleidal/limbo/releases/latest"
 const downloadRoot = `${releaseRoot}/download`
 
 const downloads = {
-  windows: `${downloadRoot}/al.kaleid.limbo-1.4.1-msi-windows-x86_64-msi.msi`,
-  macArm: `${downloadRoot}/al.kaleid.limbo-1.4.1-dmg-macos-aarch64-dmg.dmg`,
-  macIntel: `${downloadRoot}/al.kaleid.limbo-1.4.1-dmg-macos-x86_64-dmg.dmg`,
-  linux: `${downloadRoot}/al.kaleid.limbo-1.4.1-appimage-linux-x86_64-appimage.AppImage`,
+  windows: `${downloadRoot}/al.kaleid.limbo-1.4.2-msi-windows-x86_64-msi.msi`,
+  macArm: `${downloadRoot}/al.kaleid.limbo-1.4.2-dmg-macos-aarch64-dmg.dmg`,
+  macIntel: `${downloadRoot}/al.kaleid.limbo-1.4.2-dmg-macos-x86_64-dmg.dmg`,
+  linux: `${downloadRoot}/al.kaleid.limbo-1.4.2-appimage-linux-x86_64-appimage.AppImage`,
 }
 
 function preferredDownload() {
@@ -59,7 +59,7 @@ export function MarketingApp() {
                 View source
               </a>
             </div>
-            <p className="release-note">Limbo 1.4.1 · Windows, macOS, and Linux</p>
+            <p className="release-note">Limbo 1.4.2 · Windows, macOS, and Linux</p>
           </div>
 
           <div className="product-stage" aria-label="Limbo desktop application preview">
@@ -107,8 +107,8 @@ export function MarketingApp() {
           </div>
           <div className="platforms">
             <a href={downloads.windows}><span>Windows</span><small>64-bit · MSI</small><ArrowRight aria-hidden="true" /></a>
-            <a href={downloads.macArm}><span>macOS</span><small>Apple silicon · DMG</small><ArrowRight aria-hidden="true" /></a>
-            <a href={downloads.macIntel}><span>macOS</span><small>Intel · DMG</small><ArrowRight aria-hidden="true" /></a>
+            <a href={downloads.macArm}><span>macOS Apple silicon</span><small>ARM64 · DMG</small><ArrowRight aria-hidden="true" /></a>
+            <a href={downloads.macIntel}><span>macOS Intel</span><small>x86-64 · DMG</small><ArrowRight aria-hidden="true" /></a>
             <a href={downloads.linux}><span>Linux</span><small>x86-64 · AppImage</small><ArrowRight aria-hidden="true" /></a>
           </div>
           <p className="unsigned-note">Windows and macOS builds are currently unsigned. Your system may ask you to confirm the first launch.</p>
