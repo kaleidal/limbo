@@ -6,10 +6,10 @@ const releaseRoot = "https://github.com/kaleidal/limbo/releases/latest"
 const downloadRoot = `${releaseRoot}/download`
 
 const downloads = {
-  windows: `${downloadRoot}/al.kaleid.limbo-1.4.0-msi-windows-x86_64-msi.msi`,
-  macArm: `${downloadRoot}/al.kaleid.limbo-1.4.0-dmg-macos-aarch64-dmg.dmg`,
-  macIntel: `${downloadRoot}/al.kaleid.limbo-1.4.0-dmg-macos-x86_64-dmg.dmg`,
-  linux: `${downloadRoot}/al.kaleid.limbo-1.4.0-appimage-linux-x86_64-appimage.AppImage`,
+  windows: `${downloadRoot}/al.kaleid.limbo-1.4.1-msi-windows-x86_64-msi.msi`,
+  macArm: `${downloadRoot}/al.kaleid.limbo-1.4.1-dmg-macos-aarch64-dmg.dmg`,
+  macIntel: `${downloadRoot}/al.kaleid.limbo-1.4.1-dmg-macos-x86_64-dmg.dmg`,
+  linux: `${downloadRoot}/al.kaleid.limbo-1.4.1-appimage-linux-x86_64-appimage.AppImage`,
 }
 
 function preferredDownload() {
@@ -47,7 +47,7 @@ export function MarketingApp() {
       <main id="top">
         <section className="hero">
           <div className="hero-copy">
-            <h1>Everything you download,<br /><span>out of limbo.</span></h1>
+            <h1>Everything you download, <span>out of limbo.</span></h1>
             <p>Direct links, torrents, Debrid services, and your local files in one focused desktop app.</p>
             <div className="hero-actions">
               <a className="primary-action" href={primary.href}>
@@ -59,13 +59,12 @@ export function MarketingApp() {
                 View source
               </a>
             </div>
-            <p className="release-note">Limbo 1.4.0 · Windows, macOS, and Linux</p>
+            <p className="release-note">Limbo 1.4.1 · Windows, macOS, and Linux</p>
           </div>
 
           <div className="product-stage" aria-label="Limbo desktop application preview">
             <div className="stage-rule" />
             <div className="transfer-readout" aria-hidden="true">
-              <span>ACTIVE TRANSFER</span>
               <strong>linux-image.iso</strong>
               <div><i /><b>72%</b></div>
               <small>8.6 MB/s&nbsp;&nbsp; 1m 42s left</small>
@@ -85,8 +84,7 @@ export function MarketingApp() {
 
         <section className="flow" id="flow">
           <div className="section-intro">
-            <p>One route from link to library.</p>
-            <h2>Built around the job,<br />not the protocol.</h2>
+            <h2>One route from link to library.</h2>
           </div>
           <ol>
             {flow.map(({ icon: Icon, title, copy }, index) => (
