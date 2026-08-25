@@ -6,12 +6,16 @@ use limbo_desktop::api::ApiServer;
 use limbo_desktop::ipc;
 use limbo_desktop::state::AppState;
 use limbo_desktop::store::Store;
+#[cfg(not(target_os = "macos"))]
+use sabine::WindowRegionRect;
 use sabine::{AutostartEntry, DeepLinkRegistration, SingleInstancePolicy, TrayIcon, TrayMenuItem};
-use sabine::{SabineError, SabineLifecyclePolicy, SabineResult, SabineWindow, WindowRegionRect};
+use sabine::{SabineError, SabineLifecyclePolicy, SabineResult, SabineWindow};
 use tracing_subscriber::EnvFilter;
 
 const APP_ID: &str = "al.kaleid.limbo";
+#[cfg(not(target_os = "macos"))]
 const TITLEBAR_HEIGHT: i32 = 40;
+#[cfg(not(target_os = "macos"))]
 const WINDOW_CONTROLS_WIDTH: i32 = 144;
 
 static APP_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -35,6 +39,7 @@ fn main() {
                     app.set_bridge_emitter(emitter);
                 }
                 app.set_process_handle(process.handle());
+                start_app_services(app);
             }
         },
     );
@@ -53,73 +58,12 @@ fn configure_window(
     let handle = runtime.handle().clone();
     let data_dir = data_dir()?;
     let store = Store::load(&data_dir).map_err(startup_error)?;
-    let (start_on_boot, clipboard_monitoring) = store.with(|data| {
-        (
-            data.settings.start_on_boot,
-            data.settings.clipboard_monitoring,
-        )
-    });
+    let start_on_boot = store.with(|data| data.settings.start_on_boot);
     let app = Arc::new(AppState::new(store, handle).map_err(startup_error)?);
     *launched_app.lock() = Some(app.clone());
     queue_launch_arguments(&app, std::env::args());
-    app.set_clipboard_monitoring(clipboard_monitoring);
-
-    {
-        let app = Arc::downgrade(&app);
-        runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
-            loop {
-                interval.tick().await;
-                let Some(app) = app.upgrade() else {
-                    break;
-                };
-                if app.store.is_dirty()
-                    && let Err(error) = app.store.save()
-                {
-                    tracing::error!(%error, "failed to flush volatile store updates");
-                }
-            }
-        });
-    }
-
-    let download_path = app.store.with(|data| data.settings.download_path.clone());
-    {
-        let app = app.clone();
-        let torrent_state_dir = data_dir.join("torrents");
-        runtime.spawn(async move {
-            if let Err(error) = app
-                .torrent_engine
-                .init(app.clone(), &download_path, torrent_state_dir)
-                .await
-            {
-                tracing::error!("torrent engine init failed: {error}");
-            }
-        });
-    }
-
-    {
-        let app = app.clone();
-        runtime.spawn(async move {
-            match ApiServer::start(app, data_dir).await {
-                Ok(Some(port)) => tracing::info!("companion API listening on 127.0.0.1:{port}"),
-                Ok(None) => tracing::info!("companion API disabled"),
-                Err(error) => tracing::error!("companion API failed: {error}"),
-            }
-        });
-    }
-
-    tracing::info!("opening Limbo with Sabine");
-    let window = window
-        .size(1400, 900)
-        .min_size(1000, 700)
-        .frameless()
-        .titlebar_drag_region(TITLEBAR_HEIGHT)
-        .drag_exclusion_region(WindowRegionRect::new(
-            -WINDOW_CONTROLS_WIDTH,
-            0,
-            WINDOW_CONTROLS_WIDTH,
-            TITLEBAR_HEIGHT,
-        ))
+    let window = window.size(1400, 900).min_size(1000, 700).title("Limbo");
+    let window = platform_window_chrome(window)
         .hide_on_close(true)
         .tray_icon(tray_icon())
         .deep_link(DeepLinkRegistration::new(APP_ID, ["magnet"]));
@@ -142,6 +86,79 @@ fn configure_window(
             .lifecycle_policy(SabineLifecyclePolicy::browser_tab().without_hibernation()),
         app,
     ))
+}
+
+#[cfg(target_os = "macos")]
+fn platform_window_chrome(window: SabineWindow) -> SabineWindow {
+    window.system_chrome()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn platform_window_chrome(window: SabineWindow) -> SabineWindow {
+    window
+        .frameless()
+        .titlebar_drag_region(TITLEBAR_HEIGHT)
+        .drag_exclusion_region(WindowRegionRect::new(
+            -WINDOW_CONTROLS_WIDTH,
+            0,
+            WINDOW_CONTROLS_WIDTH,
+            TITLEBAR_HEIGHT,
+        ))
+}
+
+fn start_app_services(app: Arc<AppState>) {
+    tracing::info!("opening Limbo with Sabine");
+    let runtime = app.runtime.clone();
+    let clipboard_monitoring = app.store.with(|data| data.settings.clipboard_monitoring);
+    app.set_clipboard_monitoring(clipboard_monitoring);
+
+    {
+        let app = Arc::downgrade(&app);
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                let Some(app) = app.upgrade() else {
+                    break;
+                };
+                if app.store.is_dirty()
+                    && let Err(error) = app.store.save()
+                {
+                    tracing::error!(%error, "failed to flush volatile store updates");
+                }
+            }
+        });
+    }
+
+    let data_dir = match app.store.data_dir() {
+        Ok(data_dir) => data_dir.to_path_buf(),
+        Err(error) => {
+            tracing::error!(%error, "could not resolve Limbo data directory");
+            return;
+        }
+    };
+    let download_path = app.store.with(|data| data.settings.download_path.clone());
+    {
+        let app = app.clone();
+        let torrent_state_dir = data_dir.join("torrents");
+        runtime.spawn(async move {
+            if let Err(error) = app
+                .torrent_engine
+                .init(app.clone(), &download_path, torrent_state_dir)
+                .await
+            {
+                tracing::error!("torrent engine init failed: {error}");
+            }
+        });
+    }
+
+    runtime.spawn(async move {
+        match ApiServer::start(app, data_dir).await {
+            Ok(Some(port)) => tracing::info!("companion API listening on 127.0.0.1:{port}"),
+            Ok(None) => tracing::info!("companion API disabled"),
+            Err(error) => tracing::error!("companion API failed: {error}"),
+        }
+    });
 }
 
 fn tray_icon() -> TrayIcon {

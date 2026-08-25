@@ -2,6 +2,9 @@ import type { MouseEvent } from "react";
 import { Minus, Square, X } from "lucide-react";
 
 export function TitleBar() {
+  const usesNativeMacChrome =
+    Boolean(window.sabine?.bridge.__native) && /Macintosh|Mac OS X/i.test(navigator.userAgent);
+
   const handleMinimize = (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -17,6 +20,8 @@ export function TitleBar() {
     event.stopPropagation();
     window.limbo?.close();
   };
+
+  if (usesNativeMacChrome) return null;
 
   return (
     <div className="flex h-10 select-none items-center justify-between bg-neutral-900 app-drag">
