@@ -3,12 +3,18 @@ import { createRoot } from "react-dom/client"
 
 import "./index.css"
 import { App } from "./App.tsx"
+import { ApiApprovalWindow } from "./components/dialogs/api-approval-dialog.tsx"
 import { installLimboBridge } from "./lib/limbo-bridge"
 
-installLimboBridge()
+const isApprovalWindow = new URLSearchParams(window.location.search).get("window") === "approval"
+
+installLimboBridge({
+  pollEvents: !isApprovalWindow,
+  handleAppActivation: !isApprovalWindow,
+})
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    {isApprovalWindow ? <ApiApprovalWindow /> : <App />}
   </StrictMode>
 )

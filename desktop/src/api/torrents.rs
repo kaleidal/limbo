@@ -206,7 +206,7 @@ pub async fn add_torrent(
     };
     let selected = match select_file(&files, body.file_index) {
         Ok(selected) => selected,
-        Err(response) => return response,
+        Err(message) => return error(StatusCode::BAD_REQUEST, "INVALID_FILE", message),
     };
     if let Some(selected) = selected {
         if let Err(error_value) = state
@@ -460,7 +460,10 @@ fn magnet_label(magnet: &str) -> String {
         .unwrap_or_else(|| "Torrent from companion app".to_string())
 }
 
-fn select_file(files: &[TorrentFile], requested: Option<usize>) -> Result<Option<usize>, Response> {
+fn select_file(
+    files: &[TorrentFile],
+    requested: Option<usize>,
+) -> Result<Option<usize>, &'static str> {
     if files.is_empty() {
         return Ok(None);
     }
@@ -469,13 +472,7 @@ fn select_file(files: &[TorrentFile], requested: Option<usize>) -> Result<Option
             .iter()
             .any(|file| file.index == requested)
             .then_some(Some(requested))
-            .ok_or_else(|| {
-                error(
-                    StatusCode::BAD_REQUEST,
-                    "INVALID_FILE",
-                    "fileIndex does not exist in this torrent",
-                )
-            });
+            .ok_or("fileIndex does not exist in this torrent");
     }
     Ok(files
         .iter()

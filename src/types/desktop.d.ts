@@ -128,6 +128,7 @@ export interface LimboAPI {
   minimize: () => void;
   maximize: () => void;
   close: () => void;
+  quit: () => Promise<void>;
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
 
   // Bookmarks
@@ -199,6 +200,7 @@ export interface LimboAPI {
   rotateApiToken: () => Promise<{ success: boolean }>;
   selectDownloadPath: () => Promise<string | null>;
   clearData: () => Promise<{ downloads: Download[]; torrents: TorrentInfo[]; library: LibraryItem[]; settings: Settings }>;
+  getPendingApiApproval: () => Promise<ApiApprovalRequest | null>;
   decideApiApproval: (requestId: string, approved: boolean, remember: boolean) => Promise<{ accepted: boolean }>;
 
   // Events
@@ -215,8 +217,6 @@ export interface LimboAPI {
   onMagnetLinkOpened: (callback: (magnetUri: string) => void) => () => void;
   onTorrentFileOpened: (callback: (filePath: string) => void) => () => void;
   onBrowserDownloadRequested: (callback: (request: BrowserDownloadRequest) => void) => () => void;
-  onApiApprovalRequested: (callback: (request: ApiApprovalRequest) => void) => () => void;
-  onApiApprovalExpired: (callback: (data: { requestId: string }) => void) => () => void;
 }
 
 declare global {

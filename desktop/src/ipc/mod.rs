@@ -66,6 +66,19 @@ pub fn attach(window: SabineWindow, app: Arc<AppState>) -> SabineWindow {
         }
     });
 
+    window = register(window, "limbo.quit", app.clone(), |app, _| {
+        app.quit()
+            .map_err(|error| BridgeError::new(error.to_string()))?;
+        ok(())
+    });
+
+    window = register(
+        window,
+        "limbo.getPendingApiApproval",
+        app.clone(),
+        |app, _| ok(app.approvals.active()),
+    );
+
     window = register(
         window,
         "limbo.decideApiApproval",

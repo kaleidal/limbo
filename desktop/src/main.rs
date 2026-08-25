@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -6,7 +6,7 @@ use limbo_desktop::api::ApiServer;
 use limbo_desktop::ipc;
 use limbo_desktop::state::AppState;
 use limbo_desktop::store::Store;
-use sabine::{AutostartEntry, DeepLinkRegistration, SingleInstancePolicy};
+use sabine::{AutostartEntry, DeepLinkRegistration, SingleInstancePolicy, TrayIcon, TrayMenuItem};
 use sabine::{SabineError, SabineLifecyclePolicy, SabineResult, SabineWindow, WindowRegionRect};
 use tracing_subscriber::EnvFilter;
 
@@ -25,10 +25,25 @@ fn main() {
         )
         .init();
 
-    SabineWindow::main(configure_window);
+    let launched_app = Arc::new(parking_lot::Mutex::new(None));
+    let configured_app = launched_app.clone();
+    SabineWindow::main_with_process_mut(
+        move |window| configure_window(window, &configured_app),
+        move |process| {
+            if let Some(app) = launched_app.lock().clone() {
+                if let Some(emitter) = process.bridge_event_emitter() {
+                    app.set_bridge_emitter(emitter);
+                }
+                app.set_process_handle(process.handle());
+            }
+        },
+    );
 }
 
-fn configure_window(window: SabineWindow) -> SabineResult<SabineWindow> {
+fn configure_window(
+    window: SabineWindow,
+    launched_app: &parking_lot::Mutex<Option<Arc<AppState>>>,
+) -> SabineResult<SabineWindow> {
     let runtime = APP_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -45,6 +60,7 @@ fn configure_window(window: SabineWindow) -> SabineResult<SabineWindow> {
         )
     });
     let app = Arc::new(AppState::new(store, handle).map_err(startup_error)?);
+    *launched_app.lock() = Some(app.clone());
     queue_launch_arguments(&app, std::env::args());
     app.set_clipboard_monitoring(clipboard_monitoring);
 
@@ -104,6 +120,8 @@ fn configure_window(window: SabineWindow) -> SabineResult<SabineWindow> {
             WINDOW_CONTROLS_WIDTH,
             TITLEBAR_HEIGHT,
         ))
+        .hide_on_close(true)
+        .tray_icon(tray_icon())
         .deep_link(DeepLinkRegistration::new(APP_ID, ["magnet"]));
     let window = match std::env::current_exe() {
         Ok(executable) => window.autostart(AutostartEntry {
@@ -120,10 +138,67 @@ fn configure_window(window: SabineWindow) -> SabineResult<SabineWindow> {
     Ok(ipc::attach(
         window
             .single_instance_id(APP_ID)
-            .single_instance(SingleInstancePolicy::FocusExisting)
-            .lifecycle_policy(SabineLifecyclePolicy::browser_tab()),
+            .single_instance(SingleInstancePolicy::ReuseExisting)
+            .lifecycle_policy(SabineLifecyclePolicy::browser_tab().without_hibernation()),
         app,
     ))
+}
+
+fn tray_icon() -> TrayIcon {
+    let mut icon = TrayIcon::new(APP_ID, "Limbo");
+    icon.icon_path = resource_path("icon.png");
+    icon.tooltip = Some("Limbo".to_string());
+    icon.menu = vec![
+        TrayMenuItem {
+            id: "open".to_string(),
+            label: "Open Limbo".to_string(),
+            action: Some("open".to_string()),
+            enabled: true,
+            separator: false,
+        },
+        TrayMenuItem {
+            id: "separator".to_string(),
+            label: String::new(),
+            action: None,
+            enabled: false,
+            separator: true,
+        },
+        TrayMenuItem {
+            id: "quit".to_string(),
+            label: "Quit Limbo".to_string(),
+            action: Some("quit".to_string()),
+            enabled: true,
+            separator: false,
+        },
+    ];
+    icon
+}
+
+fn resource_path(file_name: &str) -> Option<PathBuf> {
+    let relative = Path::new(file_name);
+    let packaged = std::env::current_exe()
+        .ok()
+        .and_then(|executable| executable.parent().map(Path::to_path_buf))
+        .into_iter()
+        .flat_map(|directory| {
+            [
+                directory.join("resources").join(relative),
+                directory.join("..").join("Resources").join(relative),
+                directory
+                    .join("..")
+                    .join("share")
+                    .join("sabine")
+                    .join(APP_ID)
+                    .join(relative),
+            ]
+        })
+        .find(|path| path.is_file());
+    packaged.or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .map(|directory| directory.join("public").join(relative))
+            .filter(|path| path.is_file())
+    })
 }
 
 fn queue_launch_arguments(app: &AppState, arguments: impl IntoIterator<Item = String>) {

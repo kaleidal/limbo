@@ -8,7 +8,6 @@ import { DownloadsView } from "@/components/views/downloads-view";
 import { BrowserView } from "@/components/views/browser-view";
 import { SettingsView } from "@/components/views/settings-view";
 import { AddBookmarkDialog } from "@/components/dialogs/add-bookmark-dialog";
-import { ApiApprovalDialog } from "@/components/dialogs/api-approval-dialog";
 import { ClipboardMonitor } from "@/components/clipboard-monitor";
 import {
   AlertDialog,
@@ -21,7 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { CloudDownload, FileArchive, HardDriveDownload } from "lucide-react";
-import type { ApiApprovalRequest, BrowserDownloadRequest, Download } from "@/types/desktop.d";
+import type { BrowserDownloadRequest, Download } from "@/types/desktop.d";
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -58,7 +57,6 @@ export function App() {
     settings,
   } = useAppStore();
   const [pendingBrowserDownload, setPendingBrowserDownload] = useState<BrowserDownloadRequest | null>(null);
-  const [pendingApiApproval, setPendingApiApproval] = useState<ApiApprovalRequest | null>(null);
   const [browserDownloadDebridSupported, setBrowserDownloadDebridSupported] = useState(false);
   const guestOcclusionReady = useOccludeGuest(!!pendingBrowserDownload);
 
@@ -194,14 +192,6 @@ export function App() {
         setPendingBrowserDownload(request);
       });
 
-      const unsubApiApproval = window.limbo.onApiApprovalRequested((request) => {
-        setPendingApiApproval(request);
-      });
-
-      const unsubApiApprovalExpired = window.limbo.onApiApprovalExpired(({ requestId }) => {
-        setPendingApiApproval((current) => current?.requestId === requestId ? null : current);
-      });
-
       return () => {
         unsubStarted();
         unsubProgress();
@@ -214,8 +204,6 @@ export function App() {
         unsubTorrentRemoved();
         unsubTorrentFile();
         unsubBrowserDownload();
-        unsubApiApproval();
-        unsubApiApprovalExpired();
       };
     }
   }, [addDownload, addTorrent, initializeData, removeTorrent, setActiveBookmark, setCurrentView, setLibrary, updateDownload, updateTorrent]);
@@ -254,15 +242,6 @@ export function App() {
       </div>
       <AddBookmarkDialog />
       <ClipboardMonitor />
-      <ApiApprovalDialog
-        request={pendingApiApproval}
-        onDecide={(approved, remember) => {
-          if (!pendingApiApproval || !window.limbo) return;
-          const requestId = pendingApiApproval.requestId;
-          setPendingApiApproval(null);
-          void window.limbo.decideApiApproval(requestId, approved, remember);
-        }}
-      />
       <AlertDialog
         open={!!pendingBrowserDownload && guestOcclusionReady}
         onOpenChange={(open) => {

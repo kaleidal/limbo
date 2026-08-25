@@ -49,6 +49,15 @@ pub struct CompanionTorrentOptions {
     pub client_name: Option<String>,
 }
 
+struct TorrentAddRequest {
+    add: AddTorrent<'static>,
+    source: String,
+    name: Option<String>,
+    is_magnet: bool,
+    source_bytes: Option<Vec<u8>>,
+    only_files: Option<Vec<usize>>,
+}
+
 pub struct TorrentEngine {
     session: Mutex<Option<Arc<Session>>>,
     id_map: Mutex<HashMap<String, usize>>,
@@ -154,6 +163,7 @@ impl TorrentEngine {
             };
             let opts = AddTorrentOptions {
                 output_folder: Some(record.path.clone()),
+                overwrite: true,
                 ..Default::default()
             };
             match session.add_torrent(add, Some(opts)).await {
@@ -223,12 +233,14 @@ impl TorrentEngine {
     ) -> Result<TorrentInfo, TorrentError> {
         self.add(
             app,
-            AddTorrent::from_url(magnet_uri.clone()),
-            magnet_uri,
-            name,
-            true,
-            None,
-            None,
+            TorrentAddRequest {
+                add: AddTorrent::from_url(magnet_uri.clone()),
+                source: magnet_uri,
+                name,
+                is_magnet: true,
+                source_bytes: None,
+                only_files: None,
+            },
         )
         .await
     }
@@ -241,12 +253,14 @@ impl TorrentEngine {
     ) -> Result<TorrentInfo, TorrentError> {
         self.add(
             app,
-            AddTorrent::from_bytes(bytes.clone()),
-            String::new(),
-            name,
-            false,
-            Some(bytes),
-            None,
+            TorrentAddRequest {
+                add: AddTorrent::from_bytes(bytes.clone()),
+                source: String::new(),
+                name,
+                is_magnet: false,
+                source_bytes: Some(bytes),
+                only_files: None,
+            },
         )
         .await
     }
@@ -261,12 +275,14 @@ impl TorrentEngine {
         let info = self
             .add(
                 app.clone(),
-                AddTorrent::from_url(magnet_uri.clone()),
-                magnet_uri,
-                options.name,
-                true,
-                None,
-                options.selected_file_index.map(|index| vec![index]),
+                TorrentAddRequest {
+                    add: AddTorrent::from_url(magnet_uri.clone()),
+                    source: magnet_uri,
+                    name: options.name,
+                    is_magnet: true,
+                    source_bytes: None,
+                    only_files: options.selected_file_index.map(|index| vec![index]),
+                },
             )
             .await?;
         app.store.with_mut(|data| {
@@ -290,13 +306,16 @@ impl TorrentEngine {
     async fn add(
         &self,
         app: Arc<AppState>,
-        add: AddTorrent<'static>,
-        source: String,
-        name: Option<String>,
-        is_magnet: bool,
-        source_bytes: Option<Vec<u8>>,
-        only_files: Option<Vec<usize>>,
+        request: TorrentAddRequest,
     ) -> Result<TorrentInfo, TorrentError> {
+        let TorrentAddRequest {
+            add,
+            source,
+            name,
+            is_magnet,
+            source_bytes,
+            only_files,
+        } = request;
         let _guard = self.add_lock.lock().await;
         let session = self.session()?;
         let download_path = app.store.with(|data| data.settings.download_path.clone());
@@ -306,6 +325,7 @@ impl TorrentEngine {
                 Some(AddTorrentOptions {
                     output_folder: Some(download_path.clone()),
                     only_files,
+                    overwrite: true,
                     ..Default::default()
                 }),
             )
@@ -512,6 +532,7 @@ impl TorrentEngine {
     pub async fn select_file(&self, id: &str, file_index: usize) -> Result<(), TorrentError> {
         let session = self.session()?;
         let handle = self.handle_for(&session, id)?;
+        handle.wait_until_initialized().await?;
         session
             .update_only_files(&handle, &[file_index].into_iter().collect())
             .await?;

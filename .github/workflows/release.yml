@@ -12,8 +12,8 @@ permissions:
 
 jobs:
   release:
-    uses: Lantharos/Sabine/.github/workflows/release-app.yml@v0.1.5
+    uses: Lantharos/Sabine/.github/workflows/release-app.yml@v0.1.6
     with:
-      sabine_version: v0.1.5
+      sabine_version: v0.1.6
     secrets:
       SABINE_UPDATE_SIGNING_KEY: ${{ secrets.SABINE_UPDATE_SIGNING_KEY }}

@@ -31,11 +31,14 @@ type SabineGuestInfo = {
 
 type SabineApi = {
   window: {
+    show: () => void;
+    hide: () => void;
     focus: () => void;
     minimize: () => void;
     maximize: () => void;
     toggleMaximize: () => void;
     close: () => void;
+    restore: () => void;
   };
   bridge: {
     readonly __native: true;

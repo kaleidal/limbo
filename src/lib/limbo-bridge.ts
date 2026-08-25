@@ -66,7 +66,9 @@ function startEventPolling() {
   }, 400);
 }
 
-export function installLimboBridge() {
+export function installLimboBridge(
+  options: { pollEvents?: boolean; handleAppActivation?: boolean } = {},
+) {
   if (window.limbo || !window.sabine?.bridge.__native) {
     return Boolean(window.limbo);
   }
@@ -89,12 +91,24 @@ export function installLimboBridge() {
       filename: data.filename ?? "download",
     });
   });
-  window.sabine.bridge.listen("singleInstance.activate", emitLaunchArguments);
+  if (options.handleAppActivation !== false) {
+    window.sabine.bridge.listen("singleInstance.activate", emitLaunchArguments);
+    window.sabine.bridge.listen("tray.activate", (payload) => {
+      const activation = payload as { action?: string | null; itemId?: string | null };
+      if (activation.action === "quit" || activation.itemId === "quit") {
+        void invoke("limbo.quit").catch(() => undefined);
+        return;
+      }
+      window.sabine?.window.show();
+      window.sabine?.window.focus();
+    });
+  }
 
   window.limbo = {
     minimize: () => window.sabine?.window.minimize(),
     maximize: () => window.sabine?.window.toggleMaximize(),
-    close: () => window.sabine?.window.close(),
+    close: () => window.sabine?.window.hide(),
+    quit: () => invoke("limbo.quit"),
     openExternal: (url) => invoke("limbo.openExternal", { url }),
 
     getBookmarks: () => invoke("limbo.getBookmarks"),
@@ -152,6 +166,7 @@ export function installLimboBridge() {
     rotateApiToken: () => invoke("limbo.rotateApiToken"),
     selectDownloadPath: () => invoke("limbo.selectDownloadPath"),
     clearData: () => invoke("limbo.clearData"),
+    getPendingApiApproval: () => invoke("limbo.getPendingApiApproval"),
     decideApiApproval: (requestId, approved, remember) =>
       invoke("limbo.decideApiApproval", { requestId, approved, remember }),
 
@@ -170,12 +185,10 @@ export function installLimboBridge() {
     onTorrentFileOpened: (callback) => subscribe("torrent-file-opened", callback as (payload: unknown) => void),
     onBrowserDownloadRequested: (callback) =>
       subscribe("browser-download-requested", callback as (payload: unknown) => void),
-    onApiApprovalRequested: (callback) =>
-      subscribe("api-approval-requested", callback as (payload: unknown) => void),
-    onApiApprovalExpired: (callback) =>
-      subscribe("api-approval-expired", callback as (payload: unknown) => void),
   };
 
-  startEventPolling();
+  if (options.pollEvents !== false) {
+    startEventPolling();
+  }
   return true;
 }

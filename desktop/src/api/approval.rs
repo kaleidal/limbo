@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use sabine::{SabineResult, SabineWindow};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use uuid::Uuid;
@@ -67,6 +68,7 @@ pub enum ApprovalOutcome {
 
 pub struct ApprovalManager {
     pending: Mutex<HashMap<String, oneshot::Sender<TorrentApprovalDecision>>>,
+    active: Mutex<Option<TorrentApprovalRequest>>,
     queue: AsyncMutex<()>,
 }
 
@@ -74,6 +76,7 @@ impl Default for ApprovalManager {
     fn default() -> Self {
         Self {
             pending: Mutex::new(HashMap::new()),
+            active: Mutex::new(None),
             queue: AsyncMutex::new(()),
         }
     }
@@ -109,15 +112,42 @@ impl ApprovalManager {
         };
         let (sender, receiver) = oneshot::channel();
         self.pending.lock().insert(request_id.clone(), sender);
-        app.push_event(
+        *self.active.lock() = Some(request.clone());
+        let Some(process) = app.process_handle().await else {
+            self.pending.lock().remove(&request_id);
+            self.clear_active(&request_id);
+            tracing::error!("approval window unavailable because the Limbo process is not ready");
+            return ApprovalOutcome::Denied;
+        };
+        let window = tokio::task::spawn_blocking(move || {
+            approval_window().and_then(|window| process.open_window(window))
+        })
+        .await;
+        match window {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                self.pending.lock().remove(&request_id);
+                self.clear_active(&request_id);
+                tracing::error!(%error, "approval window could not open");
+                return ApprovalOutcome::Denied;
+            }
+            Err(error) => {
+                self.pending.lock().remove(&request_id);
+                self.clear_active(&request_id);
+                tracing::error!(%error, "approval window task failed");
+                return ApprovalOutcome::Denied;
+            }
+        }
+        app.emit_bridge_event(
             "api-approval-requested",
-            serde_json::to_value(request).unwrap_or_default(),
+            serde_json::to_value(&request).unwrap_or_default(),
         );
 
         let decision = tokio::time::timeout(APPROVAL_TIMEOUT, receiver).await;
         self.pending.lock().remove(&request_id);
+        self.clear_active(&request_id);
         let Ok(Ok(decision)) = decision else {
-            app.push_event(
+            app.emit_bridge_event(
                 "api-approval-expired",
                 serde_json::json!({ "requestId": request_id }),
             );
@@ -140,11 +170,42 @@ impl ApprovalManager {
     }
 
     pub fn decide(&self, request_id: &str, decision: TorrentApprovalDecision) -> bool {
-        self.pending
+        let accepted = self
+            .pending
             .lock()
             .remove(request_id)
-            .is_some_and(|sender| sender.send(decision).is_ok())
+            .is_some_and(|sender| sender.send(decision).is_ok());
+        if accepted {
+            self.clear_active(request_id);
+        }
+        accepted
     }
+
+    pub fn active(&self) -> Option<TorrentApprovalRequest> {
+        self.active.lock().clone()
+    }
+
+    fn clear_active(&self, request_id: &str) {
+        let mut active = self.active.lock();
+        if active
+            .as_ref()
+            .is_some_and(|request| request.request_id == request_id)
+        {
+            *active = None;
+        }
+    }
+}
+
+fn approval_window() -> SabineResult<SabineWindow> {
+    Ok(SabineWindow::for_current_app()?
+        .content_suffix("?window=approval")
+        .title("Limbo Torrent Approval")
+        .fixed_size(480, 520)
+        .opaque()
+        .no_chrome()
+        .hidden()
+        .active(false)
+        .always_on_top(true))
 }
 
 fn is_trusted(app: &AppState, identity: &VerifiedPeerIdentity) -> bool {
@@ -188,6 +249,7 @@ fn resolve_peer_pid(peer_port: u16) -> Option<u32> {
         .into_iter()
         .find_map(|path| socket_inode(path, peer_port));
     let inode = inode?;
+    let socket_target = format!("socket:[{inode}]");
     for entry in std::fs::read_dir("/proc").ok()?.flatten() {
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
             continue;
@@ -199,7 +261,7 @@ fn resolve_peer_pid(peer_port: u16) -> Option<u32> {
         for fd in fds.flatten() {
             if std::fs::read_link(fd.path())
                 .ok()
-                .is_some_and(|target| target == PathBuf::from(format!("socket:[{inode}]")))
+                .is_some_and(|target| target == Path::new(&socket_target))
             {
                 return Some(pid);
             }
