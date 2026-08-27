@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/store/app-store";
 import { useOccludeGuest } from "@/hooks/use-occlude-guest";
 import {
@@ -27,7 +28,19 @@ export function Sidebar() {
     primeGuestOcclusion,
     downloads,
     torrents,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      currentView: state.currentView,
+      setCurrentView: state.setCurrentView,
+      bookmarks: state.bookmarks,
+      activeBookmark: state.activeBookmark,
+      setActiveBookmark: state.setActiveBookmark,
+      setIsAddBookmarkOpen: state.setIsAddBookmarkOpen,
+      primeGuestOcclusion: state.primeGuestOcclusion,
+      downloads: state.downloads,
+      torrents: state.torrents,
+    })),
+  );
 
   const [hoveredBookmark, setHoveredBookmark] = useState<string | null>(null);
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | null>(null);

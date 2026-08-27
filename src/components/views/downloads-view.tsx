@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, memo, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/store/app-store";
 import {
   Download,
@@ -34,7 +35,15 @@ function getErrorMessage(error: unknown) {
 }
 
 export function DownloadsView() {
-  const { downloads, torrents, setTorrents, updateTorrent, updateDownload } = useAppStore();
+  const { downloads, torrents, setTorrents, updateTorrent, updateDownload } = useAppStore(
+    useShallow((state) => ({
+      downloads: state.downloads,
+      torrents: state.torrents,
+      setTorrents: state.setTorrents,
+      updateTorrent: state.updateTorrent,
+      updateDownload: state.updateDownload,
+    })),
+  );
   const [activeTab, setActiveTab] = useState<"downloads" | "torrents">("downloads");
   const [urlInput, setUrlInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);

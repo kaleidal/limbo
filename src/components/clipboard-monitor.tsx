@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Download, X, Link, Magnet, Zap, AlertCircle, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/store/app-store";
@@ -12,7 +13,21 @@ export function ClipboardMonitor() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successCount, setSuccessCount] = useState(0);
-  const { setCurrentView, setActiveBookmark, currentView } = useAppStore();
+  const hideTimerRef = useRef<number | null>(null);
+  const { setCurrentView, setActiveBookmark } = useAppStore(
+    useShallow((state) => ({
+      setCurrentView: state.setCurrentView,
+      setActiveBookmark: state.setActiveBookmark,
+    })),
+  );
+  const scheduleHide = useCallback((delay: number, clearUrls = false) => {
+    if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = window.setTimeout(() => {
+      setIsVisible(false);
+      if (clearUrls) setDetectedUrls([]);
+      hideTimerRef.current = null;
+    }, delay);
+  }, []);
 
   useEffect(() => {
     if (!window.limbo) return;
@@ -31,7 +46,7 @@ export function ClipboardMonitor() {
     // Listen for clipboard detections from main process (now receives array)
     const unsubClipboard = window.limbo.onClipboardDownloadDetected((urls: string[]) => {
       // Don't show if we're already in browser view viewing a site (let browser handle magnets)
-      if (currentView === "browser") {
+      if (useAppStore.getState().currentView === "browser") {
         // Only show for non-magnet links when in browser
         const nonMagnetUrls = urls.filter(u => !u.startsWith("magnet:"));
         if (nonMagnetUrls.length > 0) {
@@ -48,9 +63,7 @@ export function ClipboardMonitor() {
       }
       
       // Auto-hide after 20 seconds
-      setTimeout(() => {
-        setIsVisible(false);
-      }, 20000);
+      scheduleHide(20_000);
     });
 
     // Listen for magnet links opened from OS (always show these)
@@ -64,8 +77,9 @@ export function ClipboardMonitor() {
     return () => {
       unsubClipboard();
       unsubMagnet();
+      if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
     };
-  }, [currentView]);
+  }, [scheduleHide]);
 
   useEffect(() => {
     if (!window.limbo || !debridAvailable || detectedUrls.length === 0) {
@@ -168,16 +182,10 @@ export function ClipboardMonitor() {
         // Show the first warning - these are non-fatal
         setError(`Warning: ${warnings[0]}`);
         // Keep visible longer for warnings
-        setTimeout(() => {
-          setIsVisible(false);
-          setDetectedUrls([]);
-        }, 5000);
+        scheduleHide(5_000, true);
       } else {
         // Hide after short delay on success
-        setTimeout(() => {
-          setIsVisible(false);
-          setDetectedUrls([]);
-        }, 1500);
+        scheduleHide(1_500, true);
       }
     }
 
@@ -196,6 +204,7 @@ export function ClipboardMonitor() {
   };
 
   const handleDismiss = () => {
+    if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
     setIsVisible(false);
     setDetectedUrls([]);
     setError(null);

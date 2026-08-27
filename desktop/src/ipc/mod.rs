@@ -49,7 +49,7 @@ where
 pub fn attach(window: SabineWindow, app: Arc<AppState>) -> SabineWindow {
     let mut window = window;
     window = register(window, "limbo.drainEvents", app.clone(), |app, _| {
-        let events = app.drain_events();
+        let events = app.activate_event_delivery();
         ok(events
             .into_iter()
             .map(|(name, payload)| json!({ "name": name, "payload": payload }))

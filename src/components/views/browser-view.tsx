@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, useEffect, useLayoutEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/store/app-store";
 import {
   ArrowLeft,
@@ -15,7 +16,12 @@ import { Input } from "@/components/ui/input";
 import type { Bookmark } from "@/types/desktop.d";
 
 export function BrowserView() {
-  const { activeBookmark, clearExpiredBrowserSessions } = useAppStore();
+  const { activeBookmark, clearExpiredBrowserSessions } = useAppStore(
+    useShallow((state) => ({
+      activeBookmark: state.activeBookmark,
+      clearExpiredBrowserSessions: state.clearExpiredBrowserSessions,
+    })),
+  );
 
   useEffect(() => {
     clearExpiredBrowserSessions();
@@ -156,7 +162,16 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     guestOcclusionEpoch,
     guestOcclusionPrimeEpoch,
     completeGuestOcclusion,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      getBrowserSessionUrl: state.getBrowserSessionUrl,
+      rememberBrowserSession: state.rememberBrowserSession,
+      guestOcclusionDepth: state.guestOcclusionDepth,
+      guestOcclusionEpoch: state.guestOcclusionEpoch,
+      guestOcclusionPrimeEpoch: state.guestOcclusionPrimeEpoch,
+      completeGuestOcclusion: state.completeGuestOcclusion,
+    })),
+  );
   const hostRef = useRef<HTMLDivElement>(null);
   const guestIdRef = useRef<string | null>(null);
   const guestReadyRef = useRef(false);

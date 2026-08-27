@@ -9,7 +9,6 @@ import { installLimboBridge } from "./lib/limbo-bridge"
 const isApprovalWindow = new URLSearchParams(window.location.search).get("window") === "approval"
 
 installLimboBridge({
-  pollEvents: !isApprovalWindow,
   handleAppActivation: !isApprovalWindow,
 })
 

@@ -1,7 +1,7 @@
 type ListenerMap = Map<string, Set<(payload: unknown) => void>>;
 
 const listeners: ListenerMap = new Map();
-let pollTimer: number | null = null;
+let pendingEventsDrain: Promise<void> | null = null;
 
 function ensureListener(name: string) {
   let set = listeners.get(name);
@@ -44,30 +44,29 @@ async function invoke<T>(name: string, params: Record<string, unknown> = {}): Pr
 
 function subscribe(name: string, callback: (payload: unknown) => void) {
   ensureListener(name).add(callback);
-  startEventPolling();
   const unlistenNative = window.sabine?.bridge.listen(name, callback);
+  queueMicrotask(() => void drainPendingEvents());
   return () => {
     ensureListener(name).delete(callback);
     unlistenNative?.();
   };
 }
 
-function startEventPolling() {
-  if (pollTimer !== null || !window.sabine?.bridge.__native) return;
-  pollTimer = window.setInterval(async () => {
-    try {
-      const events = await invoke<Array<{ name: string; payload: unknown }>>("limbo.drainEvents");
-      for (const event of events) {
-        emitLocal(event.name, event.payload);
-      }
-    } catch {
-      // Bridge may be unavailable during teardown.
-    }
-  }, 400);
+function drainPendingEvents() {
+  if (pendingEventsDrain || !window.sabine?.bridge.__native) return pendingEventsDrain;
+  pendingEventsDrain = invoke<Array<{ name: string; payload: unknown }>>("limbo.drainEvents")
+    .then((events) => {
+      for (const event of events) emitLocal(event.name, event.payload);
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      pendingEventsDrain = null;
+    });
+  return pendingEventsDrain;
 }
 
 export function installLimboBridge(
-  options: { pollEvents?: boolean; handleAppActivation?: boolean } = {},
+  options: { handleAppActivation?: boolean } = {},
 ) {
   if (window.limbo || !window.sabine?.bridge.__native) {
     return Boolean(window.limbo);
@@ -187,8 +186,5 @@ export function installLimboBridge(
       subscribe("browser-download-requested", callback as (payload: unknown) => void),
   };
 
-  if (options.pollEvents !== false) {
-    startEventPolling();
-  }
   return true;
 }

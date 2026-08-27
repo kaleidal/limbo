@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +23,15 @@ import {
 } from "lucide-react";
 
 export function SettingsView() {
-  const { settings, setSettings, setDownloads, setTorrents, setLibrary } = useAppStore();
+  const { settings, setSettings, setDownloads, setTorrents, setLibrary } = useAppStore(
+    useShallow((state) => ({
+      settings: state.settings,
+      setSettings: state.setSettings,
+      setDownloads: state.setDownloads,
+      setTorrents: state.setTorrents,
+      setLibrary: state.setLibrary,
+    })),
+  );
   const [localSettings, setLocalSettings] = useState(settings);
   const [saved, setSaved] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -44,33 +53,31 @@ export function SettingsView() {
   const [rdLinking, setRdLinking] = useState(false);
   const [rdLinkError, setRdLinkError] = useState<string | null>(null);
   const rdPollTimerRef = useRef<number | null>(null);
+  const rdPollGenerationRef = useRef(0);
   const [showDebridApiKey, setShowDebridApiKey] = useState(false);
+  const cancelRdPolling = useCallback(() => {
+    rdPollGenerationRef.current += 1;
+    if (rdPollTimerRef.current !== null) window.clearTimeout(rdPollTimerRef.current);
+    rdPollTimerRef.current = null;
+  }, []);
 
   useEffect(() => {
     setLocalSettings(settings);
   }, [settings]);
 
   useEffect(() => {
-    return () => {
-      if (rdPollTimerRef.current !== null) {
-        window.clearInterval(rdPollTimerRef.current);
-        rdPollTimerRef.current = null;
-      }
-    };
-  }, []);
+    return cancelRdPolling;
+  }, [cancelRdPolling]);
 
   useEffect(() => {
     if (localSettings?.debrid?.service !== "realdebrid") {
-      if (rdPollTimerRef.current !== null) {
-        window.clearInterval(rdPollTimerRef.current);
-        rdPollTimerRef.current = null;
-      }
+      cancelRdPolling();
       setRdDevice(null);
       setRdLinking(false);
       setRdLinkError(null);
       setShowDebridApiKey(false);
     }
-  }, [localSettings?.debrid?.service]);
+  }, [cancelRdPolling, localSettings?.debrid?.service]);
 
   const isRealDebridLinked =
     localSettings?.debrid?.service === "realdebrid" &&
@@ -184,21 +191,21 @@ export function SettingsView() {
         expiresIn: res.expiresIn,
       });
 
-      if (rdPollTimerRef.current !== null) {
-        window.clearInterval(rdPollTimerRef.current);
-      }
-
-      rdPollTimerRef.current = window.setInterval(async () => {
+      cancelRdPolling();
+      const generation = rdPollGenerationRef.current;
+      const pollInterval = Math.max(1, res.interval) * 1_000;
+      const pollDevice = async () => {
         if (!window.limbo) return;
         try {
           const poll = await window.limbo.realDebridDevicePoll();
-          if (poll.status === "pending" || poll.status === "idle") return;
+          if (rdPollGenerationRef.current !== generation) return;
+          if (poll.status === "pending" || poll.status === "idle") {
+            rdPollTimerRef.current = window.setTimeout(pollDevice, pollInterval);
+            return;
+          }
 
           if (poll.status === "success") {
-            if (rdPollTimerRef.current !== null) {
-              window.clearInterval(rdPollTimerRef.current);
-              rdPollTimerRef.current = null;
-            }
+            cancelRdPolling();
             setRdLinking(false);
             setRdLinkError(null);
             setRdDevice(null);
@@ -209,23 +216,19 @@ export function SettingsView() {
           }
 
           if (poll.status === "expired" || poll.status === "error") {
-            if (rdPollTimerRef.current !== null) {
-              window.clearInterval(rdPollTimerRef.current);
-              rdPollTimerRef.current = null;
-            }
+            cancelRdPolling();
             setRdLinking(false);
             setRdLinkError(poll.error);
             return;
           }
         } catch {
-          if (rdPollTimerRef.current !== null) {
-            window.clearInterval(rdPollTimerRef.current);
-            rdPollTimerRef.current = null;
-          }
+          if (rdPollGenerationRef.current !== generation) return;
+          cancelRdPolling();
           setRdLinking(false);
           setRdLinkError("Real-Debrid: polling failed");
         }
-      }, Math.max(1, res.interval) * 1000);
+      };
+      rdPollTimerRef.current = window.setTimeout(pollDevice, pollInterval);
     } catch {
       setRdLinkError("Real-Debrid: failed to start device linking");
       setRdLinking(false);
@@ -234,10 +237,7 @@ export function SettingsView() {
 
   const handleRealDebridCancelDeviceLink = async () => {
     if (!window.limbo) return;
-    if (rdPollTimerRef.current !== null) {
-      window.clearInterval(rdPollTimerRef.current);
-      rdPollTimerRef.current = null;
-    }
+    cancelRdPolling();
     try {
       await window.limbo.realDebridDeviceCancel();
     } finally {

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/store/app-store";
 import {
   Search,
@@ -63,7 +64,13 @@ function getCategoryIcon(category: Category) {
 }
 
 export function LibraryView() {
-  const { library, searchQuery, setSearchQuery } = useAppStore();
+  const { library, searchQuery, setSearchQuery } = useAppStore(
+    useShallow((state) => ({
+      library: state.library,
+      searchQuery: state.searchQuery,
+      setSearchQuery: state.setSearchQuery,
+    })),
+  );
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<Category>("all");

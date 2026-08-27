@@ -9,7 +9,7 @@ use limbo_desktop::store::Store;
 #[cfg(not(target_os = "macos"))]
 use sabine::WindowRegionRect;
 use sabine::{AutostartEntry, DeepLinkRegistration, SingleInstancePolicy, TrayIcon, TrayMenuItem};
-use sabine::{SabineError, SabineLifecyclePolicy, SabineResult, SabineWindow};
+use sabine::{SabineColor, SabineError, SabineLifecyclePolicy, SabineResult, SabineWindow};
 use tracing_subscriber::EnvFilter;
 
 const APP_ID: &str = "al.kaleid.limbo";
@@ -62,7 +62,11 @@ fn configure_window(
     let app = Arc::new(AppState::new(store, handle).map_err(startup_error)?);
     *launched_app.lock() = Some(app.clone());
     queue_launch_arguments(&app, std::env::args());
-    let window = window.size(1400, 900).min_size(1000, 700).title("Limbo");
+    let window = window
+        .background_color(SabineColor::rgb8(10, 10, 10))
+        .size(1400, 900)
+        .min_size(1000, 700)
+        .title("Limbo");
     let window = platform_window_chrome(window)
         .hide_on_close(true)
         .tray_icon(tray_icon())

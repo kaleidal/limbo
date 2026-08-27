@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
@@ -20,6 +21,7 @@ pub struct AppState {
     pub store: Store,
     pub runtime: Handle,
     pub events: Mutex<VecDeque<(String, Value)>>,
+    bridge_events_ready: AtomicBool,
     pub download_manager: DownloadManager,
     pub torrent_engine: TorrentEngine,
     pub debrid: DebridService,
@@ -43,6 +45,7 @@ impl AppState {
             store,
             runtime,
             events: Mutex::new(VecDeque::new()),
+            bridge_events_ready: AtomicBool::new(false),
             download_manager: DownloadManager::new()?,
             torrent_engine: TorrentEngine::new(),
             debrid: DebridService::new()?,
@@ -72,17 +75,31 @@ impl AppState {
     }
 
     pub fn push_event(&self, name: impl Into<String>, payload: Value) {
+        let name = name.into();
+        if self.bridge_events_ready.load(Ordering::Acquire)
+            && self.emit_bridge_event(name.clone(), payload.clone())
+        {
+            return;
+        }
         let mut events = self.events.lock();
+        if self.bridge_events_ready.load(Ordering::Acquire)
+            && self.emit_bridge_event(name.clone(), payload.clone())
+        {
+            return;
+        }
         if events.len() == EVENT_QUEUE_CAPACITY
             && let Some((dropped_event, _)) = events.pop_front()
         {
             tracing::warn!(%dropped_event, capacity = EVENT_QUEUE_CAPACITY, "event queue overflow; evicted oldest event");
         }
-        events.push_back((name.into(), payload));
+        events.push_back((name, payload));
     }
 
-    pub fn drain_events(&self) -> Vec<(String, Value)> {
-        self.events.lock().drain(..).collect()
+    pub fn activate_event_delivery(&self) -> Vec<(String, Value)> {
+        let mut events = self.events.lock();
+        let pending = events.drain(..).collect();
+        self.bridge_events_ready.store(true, Ordering::Release);
+        pending
     }
 
     pub fn set_bridge_emitter(&self, emitter: BridgeEventEmitter) {

@@ -22,10 +22,10 @@ axum = "0.8.9"
 base64 = "0.22.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 directories = "6.0.0"
-sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.6" }
+sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.12" }
 futures-util = "0.3.33"
 if-addrs = "0.15.0"
-librqbit = { version = "8.1.1", features = ["http-api", "tracing-subscriber-utils"] }
+librqbit = { version = "8.1.1", default-features = false, features = ["http-api", "rust-tls", "tracing-subscriber-utils"] }
 mime_guess = "2.0.5"
 open = "5.4.0"
 parking_lot = "0.12.5"
@@ -46,3 +46,8 @@ uuid = { version = "1.24.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 tower = "0.5.3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

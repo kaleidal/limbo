@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/store/app-store";
 import { useOccludeGuest } from "@/hooks/use-occlude-guest";
 import { Sidebar } from "@/components/sidebar";
@@ -55,7 +56,21 @@ export function App() {
     setCurrentView,
     setActiveBookmark,
     settings,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      currentView: state.currentView,
+      initializeData: state.initializeData,
+      setLibrary: state.setLibrary,
+      addDownload: state.addDownload,
+      updateDownload: state.updateDownload,
+      addTorrent: state.addTorrent,
+      updateTorrent: state.updateTorrent,
+      removeTorrent: state.removeTorrent,
+      setCurrentView: state.setCurrentView,
+      setActiveBookmark: state.setActiveBookmark,
+      settings: state.settings,
+    })),
+  );
   const [pendingBrowserDownload, setPendingBrowserDownload] = useState<BrowserDownloadRequest | null>(null);
   const [browserDownloadDebridSupported, setBrowserDownloadDebridSupported] = useState(false);
   const guestOcclusionReady = useOccludeGuest(!!pendingBrowserDownload);

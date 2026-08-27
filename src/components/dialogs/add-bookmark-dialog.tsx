@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/store/app-store";
 import { useOccludeGuest } from "@/hooks/use-occlude-guest";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,13 @@ import { Label } from "@/components/ui/label";
 import { X, Globe, Loader2 } from "lucide-react";
 
 export function AddBookmarkDialog() {
-  const { isAddBookmarkOpen, setIsAddBookmarkOpen, addBookmark } = useAppStore();
+  const { isAddBookmarkOpen, setIsAddBookmarkOpen, addBookmark } = useAppStore(
+    useShallow((state) => ({
+      isAddBookmarkOpen: state.isAddBookmarkOpen,
+      setIsAddBookmarkOpen: state.setIsAddBookmarkOpen,
+      addBookmark: state.addBookmark,
+    })),
+  );
   const guestOcclusionReady = useOccludeGuest(isAddBookmarkOpen);
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
