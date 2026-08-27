@@ -1,6 +1,6 @@
 [package]
 name = "limbo"
-version = "1.4.12"
+version = "1.4.13"
 edition = "2024"
 authors = ["Kristof <kristof@lanth.me>"]
 description = "Limbo desktop host on Sabine"
@@ -22,7 +22,7 @@ axum = "0.8.9"
 base64 = "0.22.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 directories = "6.0.0"
-sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.18" }
+sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.19" }
 futures-util = "0.3.33"
 if-addrs = "0.15.0"
 librqbit = { version = "8.1.1", default-features = false, features = ["http-api", "rust-tls", "tracing-subscriber-utils"] }
