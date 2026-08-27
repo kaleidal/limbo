@@ -369,12 +369,11 @@ fn unknown_identity() -> VerifiedPeerIdentity {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::socket_inode;
 
     #[test]
-    #[cfg(target_os = "linux")]
     fn missing_socket_table_has_no_match() {
         assert_eq!(socket_inode("/definitely/missing", 43173), None);
     }
