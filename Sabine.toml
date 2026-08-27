@@ -1,7 +1,7 @@
 [app]
 id = "al.kaleid.limbo"
 name = "Limbo"
-version = "1.4.8"
+version = "1.4.9"
 icon = "public/icon.png"
 cargo_manifest = "desktop/Cargo.toml"
 mime_types = ["x-scheme-handler/magnet", "application/x-bittorrent"]
