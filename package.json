@@ -1,7 +1,7 @@
 {
   "name": "limbo",
   "private": true,
-  "version": "1.4.7",
+  "version": "1.4.8",
   "description": "A software manager with integrated browser, download manager, torrent client, and companion API for apps like Raffi",
   "type": "module",
   "author": {
@@ -37,7 +37,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.3.0",
+    "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
