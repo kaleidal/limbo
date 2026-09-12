@@ -1,6 +1,6 @@
 [package]
 name = "limbo"
-version = "1.4.14"
+version = "1.4.15"
 edition = "2024"
 rust-version = "1.95"
 authors = ["Kristof <kristof@lanth.me>"]
