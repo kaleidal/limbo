@@ -1,6 +1,8 @@
 [app]
 id = "al.kaleid.limbo"
 name = "Limbo"
+publisher = "Kaleidal"
+maintainer = "Kaleidal <hello@kaleid.al>"
 version = "1.4.15"
 icon = "public/icon.png"
 cargo_manifest = "desktop/Cargo.toml"
