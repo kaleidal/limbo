@@ -31,7 +31,9 @@ Users are solely responsible for ensuring they have the legal right to access, d
 
 Download the latest Limbo release from [GitHub Releases](https://github.com/kaleidal/limbo/releases/latest). Packages are available for Windows, Apple Silicon Macs, and x86-64 Linux.
 
-The public website is [limbo.kaleid.al](https://limbo.kaleid.al).
+The public website is [limbo.kaleid.al](https://limbo.kaleid.al). Its download buttons open the latest installer directly. Stable download links are `/download/windows`, `/download/macos`, and `/download/linux`; macOS requires Apple silicon.
+
+Deploy the website with `bun run deploy:marketing`. Download routes resolve the latest published updater manifest, cached for one minute, so new app releases do not require a website deployment.
 
 These initial packages are not yet signed with Apple or Microsoft developer certificates. Windows may show a SmartScreen warning. On macOS, allow Limbo from **System Settings → Privacy & Security** after the first launch attempt. Linux packages do not require an application-signing certificate.
 

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": [],
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.marketing-worker.tsbuildinfo"
+  },
+  "include": ["marketing/worker", "node_modules/.tmp/limbo-worker.d.ts"]
+}

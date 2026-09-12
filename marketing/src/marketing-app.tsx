@@ -3,67 +3,18 @@ import { useEffect, useState } from "react"
 
 import previewUrl from "../../preview.png"
 
-const releaseRoot = "https://github.com/kaleidal/limbo/releases/latest"
-const releaseApi = "https://api.github.com/repos/kaleidal/limbo/releases/latest"
-
-type Downloads = {
-  windows: string
-  macArm: string
-  linux: string
+const downloads = {
+  windows: "/download/windows",
+  macos: "/download/macos",
+  linux: "/download/linux",
 }
 
-type LatestRelease = {
-  version: string
-  downloads: Downloads
-}
-
-type GitHubRelease = {
-  tag_name: string
-  html_url: string
-  assets: Array<{ name: string; browser_download_url: string }>
-}
-
-const releaseFallback: LatestRelease = {
-  version: "latest",
-  downloads: {
-    windows: releaseRoot,
-    macArm: releaseRoot,
-    linux: releaseRoot,
-  },
-}
-
-let latestReleaseRequest: Promise<LatestRelease> | undefined
-
-function latestRelease() {
-  latestReleaseRequest ??= fetch(releaseApi, {
-    headers: { Accept: "application/vnd.github+json" },
-  }).then(async (response) => {
-    if (!response.ok) throw new Error(`GitHub release lookup failed (${response.status})`)
-    const release = (await response.json()) as GitHubRelease
-    const asset = (suffix: string) => {
-      const match = release.assets.find(({ name }) => name.endsWith(suffix))
-      if (!match) throw new Error(`Latest Limbo release is missing ${suffix}`)
-      return match.browser_download_url
-    }
-    return {
-      version: release.tag_name.replace(/^v/, ""),
-      downloads: {
-        windows: asset("-msi-windows-x86_64-msi.msi"),
-        macArm: asset("-dmg-macos-aarch64-dmg.dmg"),
-        linux: asset("-appimage-linux-x86_64-appimage.AppImage"),
-      },
-    }
-  })
-  return latestReleaseRequest
-}
-
-function preferredDownload(downloads: Downloads) {
-  if (typeof navigator === "undefined") return { label: "Download Limbo", href: releaseRoot }
+function preferredDownload() {
   const platform = `${navigator.userAgent} ${navigator.platform}`.toLowerCase()
   if (platform.includes("windows")) return { label: "Download for Windows", href: downloads.windows }
-  if (platform.includes("mac")) return { label: "Download for macOS", href: downloads.macArm }
+  if (platform.includes("mac")) return { label: "Download for macOS", href: downloads.macos }
   if (platform.includes("linux")) return { label: "Download for Linux", href: downloads.linux }
-  return { label: "Download Limbo", href: releaseRoot }
+  return { label: "Download Limbo", href: "#download" }
 }
 
 const flow = [
@@ -73,21 +24,21 @@ const flow = [
 ]
 
 export function MarketingApp() {
-  const [release, setRelease] = useState(releaseFallback)
+  const [version, setVersion] = useState<string>()
 
   useEffect(() => {
-    let current = true
-    void latestRelease().then(
-      (latest) => current && setRelease(latest),
-      () => undefined,
-    )
-    return () => {
-      current = false
-    }
+    const controller = new AbortController()
+    void fetch("/api/release", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return
+        const release: { version: string } = await response.json()
+        setVersion(release.version)
+      })
+      .catch(() => undefined)
+    return () => controller.abort()
   }, [])
 
-  const { downloads } = release
-  const primary = preferredDownload(downloads)
+  const primary = preferredDownload()
 
   return (
     <div className="site-shell">
@@ -118,7 +69,7 @@ export function MarketingApp() {
                 View source
               </a>
             </div>
-            <p className="release-note">Limbo {release.version} · Windows, macOS, and Linux</p>
+            <p className="release-note">{version ? `Limbo ${version} · ` : ""}Windows, macOS, and Linux</p>
           </div>
 
           <div className="product-stage" aria-label="Limbo desktop application preview">
@@ -166,7 +117,7 @@ export function MarketingApp() {
           </div>
           <div className="platforms">
             <a href={downloads.windows}><span>Windows</span><small>64-bit · MSI</small><ArrowRight aria-hidden="true" /></a>
-            <a href={downloads.macArm}><span>macOS Apple silicon</span><small>ARM64 · DMG</small><ArrowRight aria-hidden="true" /></a>
+            <a href={downloads.macos}><span>macOS</span><small>Apple silicon · DMG</small><ArrowRight aria-hidden="true" /></a>
             <a href={downloads.linux}><span>Linux</span><small>x86-64 · AppImage</small><ArrowRight aria-hidden="true" /></a>
           </div>
           <p className="unsigned-note">Windows and macOS builds are currently unsigned. Your system may ask you to confirm the first launch.</p>
