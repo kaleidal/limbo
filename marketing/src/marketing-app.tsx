@@ -9,7 +9,6 @@ const releaseApi = "https://api.github.com/repos/kaleidal/limbo/releases/latest"
 type Downloads = {
   windows: string
   macArm: string
-  macIntel: string
   linux: string
 }
 
@@ -29,7 +28,6 @@ const releaseFallback: LatestRelease = {
   downloads: {
     windows: releaseRoot,
     macArm: releaseRoot,
-    macIntel: releaseRoot,
     linux: releaseRoot,
   },
 }
@@ -52,7 +50,6 @@ function latestRelease() {
       downloads: {
         windows: asset("-msi-windows-x86_64-msi.msi"),
         macArm: asset("-dmg-macos-aarch64-dmg.dmg"),
-        macIntel: asset("-dmg-macos-x86_64-dmg.dmg"),
         linux: asset("-appimage-linux-x86_64-appimage.AppImage"),
       },
     }
@@ -170,7 +167,6 @@ export function MarketingApp() {
           <div className="platforms">
             <a href={downloads.windows}><span>Windows</span><small>64-bit · MSI</small><ArrowRight aria-hidden="true" /></a>
             <a href={downloads.macArm}><span>macOS Apple silicon</span><small>ARM64 · DMG</small><ArrowRight aria-hidden="true" /></a>
-            <a href={downloads.macIntel}><span>macOS Intel</span><small>x86-64 · DMG</small><ArrowRight aria-hidden="true" /></a>
             <a href={downloads.linux}><span>Linux</span><small>x86-64 · AppImage</small><ArrowRight aria-hidden="true" /></a>
           </div>
           <p className="unsigned-note">Windows and macOS builds are currently unsigned. Your system may ask you to confirm the first launch.</p>

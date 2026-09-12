@@ -29,7 +29,7 @@ Users are solely responsible for ensuring they have the legal right to access, d
 
 ## Download
 
-Download the latest Limbo release from [GitHub Releases](https://github.com/kaleidal/limbo/releases/latest). Packages are available for Windows, Intel and Apple Silicon Macs, and x86-64 Linux.
+Download the latest Limbo release from [GitHub Releases](https://github.com/kaleidal/limbo/releases/latest). Packages are available for Windows, Apple Silicon Macs, and x86-64 Linux.
 
 The public website is [limbo.kaleid.al](https://limbo.kaleid.al).
 
@@ -42,13 +42,13 @@ Limbo installs and maintains its shared Sabine Chromium runtime on first launch,
 ### Prerequisites
 
 - [Bun](https://bun.sh)
-- Rust (stable, 1.89+)
+- Rust (stable, 1.95+)
 - Sabine CLI
 
 Install the matching Sabine tools:
 
 ```bash
-cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.20 sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.25 sabine-cli
 ```
 
 ### Install
