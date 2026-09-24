@@ -109,7 +109,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -120,7 +120,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1028,7 +1028,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1224,7 +1224,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1269,27 +1269,6 @@ checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
-]
-
-[[package]]
-name = "exwlshellev"
-version = "0.20.0"
-source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=12286020d31c6b0b3aab54c9b206ea1a86d144bf#12286020d31c6b0b3aab54c9b206ea1a86d144bf"
-dependencies = [
- "calloop",
- "calloop-wayland-source",
- "log",
- "raw-window-handle",
- "smithay-client-toolkit",
- "tempfile",
- "thiserror 2.0.20",
- "waycrate_xkbkeycode",
- "wayland-backend",
- "wayland-client",
- "wayland-cursor",
- "wayland-protocols",
- "wayland-protocols-misc",
- "wayland-protocols-wlr",
 ]
 
 [[package]]
@@ -2614,7 +2593,7 @@ dependencies = [
 
 [[package]]
 name = "limbo"
-version = "1.4.18"
+version = "1.4.19"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2830,7 +2809,7 @@ dependencies = [
  "once_cell",
  "png",
  "thiserror 2.0.20",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2925,7 +2904,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3504,7 +3483,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3960,7 +3939,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4019,7 +3998,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4054,13 +4033,12 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sabine"
-version = "0.28.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.28#0b30238c844cfdf9c6c0e3e85f68b161f28391d9"
+version = "0.29.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.29#7e1a8ad57903cef8e83bdc7859de9bb909a080d2"
 dependencies = [
  "ashpd",
  "bytemuck",
  "crossbeam-channel",
- "exwlshellev",
  "futures-util",
  "getrandom 0.4.3",
  "global-hotkey",
@@ -4073,7 +4051,6 @@ dependencies = [
  "objc2-foundation",
  "pollster 1.0.1",
  "raw-window-handle",
- "rustix 1.1.4",
  "sabine-bridge",
  "sabine-host",
  "sabine-platform",
@@ -4082,14 +4059,12 @@ dependencies = [
  "serde",
  "serde_json",
  "shell-words",
- "smithay-client-toolkit",
  "softbuffer",
  "thiserror 2.0.20",
  "tokio",
  "toml",
  "tray-icon",
  "url",
- "wayland-client",
  "wgpu",
  "windows",
  "winit",
@@ -4097,8 +4072,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-bridge"
-version = "0.28.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.28#0b30238c844cfdf9c6c0e3e85f68b161f28391d9"
+version = "0.29.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.29#7e1a8ad57903cef8e83bdc7859de9bb909a080d2"
 dependencies = [
  "serde",
  "serde_json",
@@ -4106,8 +4081,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-host"
-version = "0.28.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.28#0b30238c844cfdf9c6c0e3e85f68b161f28391d9"
+version = "0.29.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.29#7e1a8ad57903cef8e83bdc7859de9bb909a080d2"
 dependencies = [
  "sabine-bridge",
  "sabine-runtime",
@@ -4118,8 +4093,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-platform"
-version = "0.28.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.28#0b30238c844cfdf9c6c0e3e85f68b161f28391d9"
+version = "0.29.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.29#7e1a8ad57903cef8e83bdc7859de9bb909a080d2"
 dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
@@ -4130,8 +4105,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-runtime"
-version = "0.28.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.28#0b30238c844cfdf9c6c0e3e85f68b161f28391d9"
+version = "0.29.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.29#7e1a8ad57903cef8e83bdc7859de9bb909a080d2"
 dependencies = [
  "bzip2",
  "libc",
@@ -4146,8 +4121,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-service"
-version = "0.28.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.28#0b30238c844cfdf9c6c0e3e85f68b161f28391d9"
+version = "0.29.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.29#7e1a8ad57903cef8e83bdc7859de9bb909a080d2"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -4157,6 +4132,7 @@ dependencies = [
  "libc",
  "sabine-host",
  "sabine-runtime",
+ "self-replace",
  "semver",
  "serde",
  "serde_json",
@@ -4255,6 +4231,17 @@ checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "self-replace"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03ec815b5eab420ab893f63393878d89c90fdd94c0bcc44c07abb8ad95552fb7"
+dependencies = [
+ "fastrand",
+ "tempfile",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4527,13 +4514,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74dc9ee14b0fdcb535f9556141bacac070c994a977d2240ee455d7438a617f00"
 dependencies = [
  "bitflags 2.13.2",
- "bytemuck",
  "calloop",
  "calloop-wayland-source",
  "cursor-icon",
  "log",
  "memmap2",
- "pkg-config",
  "rustix 1.1.4",
  "thiserror 2.0.20",
  "wayland-client",
@@ -4544,7 +4529,6 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-scanner",
- "xkbcommon",
  "xkeysym",
 ]
 
@@ -4565,7 +4549,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4733,10 +4717,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5184,7 +5168,7 @@ dependencies = [
  "once_cell",
  "png",
  "thiserror 2.0.20",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5228,7 +5212,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5500,21 +5484,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
-]
-
-[[package]]
-name = "waycrate_xkbkeycode"
-version = "0.20.0"
-source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=12286020d31c6b0b3aab54c9b206ea1a86d144bf#12286020d31c6b0b3aab54c9b206ea1a86d144bf"
-dependencies = [
- "calloop",
- "log",
- "memmap2",
- "wayland-backend",
- "wayland-client",
- "winit-common 0.31.0-beta.3",
- "winit-core 0.31.0-beta.3",
- "xkbcommon-dl",
 ]
 
 [[package]]
@@ -5891,7 +5860,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6191,8 +6160,8 @@ dependencies = [
  "tracing",
  "winit-android",
  "winit-appkit",
- "winit-common 0.31.0-beta.2",
- "winit-core 0.31.0-beta.2",
+ "winit-common",
+ "winit-core",
  "winit-orbital",
  "winit-uikit",
  "winit-wayland",
@@ -6213,7 +6182,7 @@ dependencies = [
  "raw-window-handle",
  "smol_str",
  "tracing",
- "winit-core 0.31.0-beta.2",
+ "winit-core",
 ]
 
 [[package]]
@@ -6234,8 +6203,8 @@ dependencies = [
  "raw-window-handle",
  "smol_str",
  "tracing",
- "winit-common 0.31.0-beta.2",
- "winit-core 0.31.0-beta.2",
+ "winit-common",
+ "winit-core",
 ]
 
 [[package]]
@@ -6250,21 +6219,8 @@ dependencies = [
  "objc2-foundation",
  "smol_str",
  "tracing",
- "winit-core 0.31.0-beta.2",
+ "winit-core",
  "x11-dl",
- "xkbcommon-dl",
-]
-
-[[package]]
-name = "winit-common"
-version = "0.31.0-beta.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e90422ff1c04502aaaac1dad1d099791c2bbb3fbb3f823019e0ce5cdeee04025"
-dependencies = [
- "memmap2",
- "smol_str",
- "tracing",
- "winit-core 0.31.0-beta.3",
  "xkbcommon-dl",
 ]
 
@@ -6276,22 +6232,6 @@ dependencies = [
  "bitflags 2.13.2",
  "cursor-icon",
  "dpi 0.1.2 (git+https://github.com/rust-windowing/winit?rev=42366231b0d92480a933339bd5eaa7fba8106f42)",
- "keyboard-types 0.8.3",
- "raw-window-handle",
- "smol_str",
- "url",
- "web-time",
-]
-
-[[package]]
-name = "winit-core"
-version = "0.31.0-beta.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8af6307236c51847199950c15cf80e0481a250bb96ce9132f5026df4ad3d0f9"
-dependencies = [
- "bitflags 2.13.2",
- "cursor-icon",
- "dpi 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "keyboard-types 0.8.3",
  "raw-window-handle",
  "smol_str",
@@ -6312,7 +6252,7 @@ dependencies = [
  "redox_event",
  "smol_str",
  "tracing",
- "winit-core 0.31.0-beta.2",
+ "winit-core",
 ]
 
 [[package]]
@@ -6331,8 +6271,8 @@ dependencies = [
  "raw-window-handle",
  "smol_str",
  "tracing",
- "winit-common 0.31.0-beta.2",
- "winit-core 0.31.0-beta.2",
+ "winit-common",
+ "winit-core",
 ]
 
 [[package]]
@@ -6358,8 +6298,8 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-plasma",
- "winit-common 0.31.0-beta.2",
- "winit-core 0.31.0-beta.2",
+ "winit-common",
+ "winit-core",
 ]
 
 [[package]]
@@ -6381,7 +6321,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
- "winit-core 0.31.0-beta.2",
+ "winit-core",
 ]
 
 [[package]]
@@ -6398,7 +6338,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "windows-sys 0.61.2",
- "winit-core 0.31.0-beta.2",
+ "winit-core",
 ]
 
 [[package]]
@@ -6417,8 +6357,8 @@ dependencies = [
  "rustix 1.1.4",
  "smol_str",
  "tracing",
- "winit-common 0.31.0-beta.2",
- "winit-core 0.31.0-beta.2",
+ "winit-common",
+ "winit-core",
  "x11-dl",
  "x11rb",
  "xkbcommon-dl",
@@ -6494,17 +6434,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "163b33ed8786455e2fa5d72f554057ce3f3182425434f756cd39c99839d88e23"
 
 [[package]]
-name = "xkbcommon"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d66ca9352cbd4eecbbc40871d8a11b4ac8107cfc528a6e14d7c19c69d0e1ac9"
-dependencies = [
- "libc",
- "memmap2",
- "xkeysym",
-]
-
-[[package]]
 name = "xkbcommon-dl"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6522,9 +6451,6 @@ name = "xkeysym"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
-dependencies = [
- "bytemuck",
-]
 
 [[package]]
 name = "xml-rs"
