@@ -1,13 +1,15 @@
 import { create } from "zustand";
-import type {
-  Bookmark,
-  LibraryItem,
-  Download,
-  Settings,
-  TorrentInfo,
-} from "@/types/desktop.d";
+import {
+  commands,
+  type Bookmark,
+  type Download,
+  type LibraryItem,
+  type Settings,
+  type TorrentInfo,
+} from "@/lib/bindings";
 
 type ViewType = "library" | "downloads" | "settings" | "browser";
+type DownloadsTab = "downloads" | "torrents";
 type BrowserSession = {
   bookmarkId: string;
   url: string;
@@ -16,12 +18,21 @@ type BrowserSession = {
 
 const BROWSER_SESSION_TTL_MS = 5 * 60 * 1000;
 
+function upsert<T extends { id: string }>(items: T[], item: T) {
+  const index = items.findIndex((existing) => existing.id === item.id);
+  if (index === -1) return [...items, item];
+  return items.map((existing, position) => (position === index ? item : existing));
+}
+
 interface AppState {
-  // Current view
   currentView: ViewType;
   setCurrentView: (view: ViewType) => void;
+  downloadsTab: DownloadsTab;
+  showDownloads: (tab: DownloadsTab) => void;
+  setDownloadsTab: (tab: DownloadsTab) => void;
+  vpnRequired: boolean;
+  setVpnRequired: (required: boolean) => void;
 
-  // Active bookmark (for browser view)
   activeBookmark: Bookmark | null;
   setActiveBookmark: (bookmark: Bookmark | null) => void;
   browserSessions: Record<string, BrowserSession>;
@@ -29,45 +40,36 @@ interface AppState {
   getBrowserSessionUrl: (bookmarkId: string, fallbackUrl: string) => string;
   clearExpiredBrowserSessions: () => void;
 
-  // Bookmarks
   bookmarks: Bookmark[];
   setBookmarks: (bookmarks: Bookmark[]) => void;
   addBookmark: (bookmark: Bookmark) => void;
-  removeBookmark: (id: string) => void;
 
-  // Library
   library: LibraryItem[];
   setLibrary: (library: LibraryItem[]) => void;
-  addToLibrary: (item: LibraryItem) => void;
-  removeFromLibrary: (id: string) => void;
 
-  // Downloads
   downloads: Download[];
   setDownloads: (downloads: Download[]) => void;
-  updateDownload: (id: string, updates: Partial<Download>) => void;
-  addDownload: (download: Download) => void;
+  upsertDownload: (download: Download) => void;
   removeDownload: (id: string) => void;
 
-  // Torrents
   torrents: TorrentInfo[];
   setTorrents: (torrents: TorrentInfo[]) => void;
-  addTorrent: (torrent: TorrentInfo) => void;
-  updateTorrent: (id: string, updates: Partial<TorrentInfo>) => void;
+  upsertTorrent: (torrent: TorrentInfo) => void;
   removeTorrent: (id: string) => void;
 
-  // Settings
   settings: Settings | null;
   setSettings: (settings: Settings) => void;
 
-  // Search
+  incomingLinks: string[];
+  incomingLinksExpire: boolean;
+  showIncomingLinks: (links: string[], expire?: boolean) => void;
+  dismissIncomingLinks: () => void;
+
   searchQuery: string;
   setSearchQuery: (query: string) => void;
 
-  // Modals
   isAddBookmarkOpen: boolean;
   setIsAddBookmarkOpen: (open: boolean) => void;
-  isSettingsOpen: boolean;
-  setIsSettingsOpen: (open: boolean) => void;
   /// Native guest webviews sit above the React tree; depth > 0 hides them
   /// so modal overlays in the primary UI are visible.
   guestOcclusionDepth: number;
@@ -79,16 +81,19 @@ interface AppState {
   popGuestOcclusion: () => void;
   completeGuestOcclusion: () => void;
 
-  // Init
   initializeData: () => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  // Current view
   currentView: "library",
   setCurrentView: (view) => set({ currentView: view }),
+  downloadsTab: "downloads",
+  showDownloads: (tab) =>
+    set({ activeBookmark: null, currentView: "downloads", downloadsTab: tab }),
+  setDownloadsTab: (tab) => set({ downloadsTab: tab }),
+  vpnRequired: false,
+  setVpnRequired: (required) => set({ vpnRequired: required }),
 
-  // Active bookmark
   activeBookmark: null,
   setActiveBookmark: (bookmark) =>
     set({ activeBookmark: bookmark, currentView: bookmark ? "browser" : "library" }),
@@ -119,79 +124,42 @@ export const useAppStore = create<AppState>((set, get) => ({
       ),
     })),
 
-  // Bookmarks
   bookmarks: [],
   setBookmarks: (bookmarks) => set({ bookmarks }),
   addBookmark: (bookmark) =>
     set((state) => ({ bookmarks: [...state.bookmarks, bookmark] })),
-  removeBookmark: (id) =>
-    set((state) => ({ bookmarks: state.bookmarks.filter((b) => b.id !== id) })),
 
-  // Library
   library: [],
   setLibrary: (library) => set({ library }),
-  addToLibrary: (item) =>
-    set((state) => ({ library: [...state.library, item] })),
-  removeFromLibrary: (id) =>
-    set((state) => ({ library: state.library.filter((l) => l.id !== id) })),
 
-  // Downloads
   downloads: [],
   setDownloads: (downloads) => set({ downloads }),
-  updateDownload: (id, updates) =>
-    set((state) => ({
-      downloads: state.downloads.map((d) =>
-        d.id === id ? { ...d, ...updates } : d
-      ),
-    })),
-  addDownload: (download) =>
-    set((state) => {
-      const existingIndex = state.downloads.findIndex((d) => d.id === download.id);
-      if (existingIndex !== -1) {
-        return {
-          downloads: state.downloads.map((item) =>
-            item.id === download.id ? { ...item, ...download } : item
-          ),
-        };
-      }
-      return { downloads: [...state.downloads, download] };
-    }),
+  upsertDownload: (download) =>
+    set((state) => ({ downloads: upsert(state.downloads, download) })),
   removeDownload: (id) =>
     set((state) => ({ downloads: state.downloads.filter((d) => d.id !== id) })),
 
-  // Torrents
   torrents: [],
   setTorrents: (torrents) => set({ torrents }),
-  addTorrent: (torrent) =>
-    set((state) => {
-      // Prevent duplicates
-      if (state.torrents.some((t) => t.id === torrent.id)) {
-        return state;
-      }
-      return { torrents: [...state.torrents, torrent] };
-    }),
-  updateTorrent: (id, updates) =>
-    set((state) => ({
-      torrents: state.torrents.map((t) =>
-        t.id === id ? { ...t, ...updates } : t
-      ),
-    })),
+  upsertTorrent: (torrent) =>
+    set((state) => ({ torrents: upsert(state.torrents, torrent) })),
   removeTorrent: (id) =>
     set((state) => ({ torrents: state.torrents.filter((t) => t.id !== id) })),
 
-  // Settings
   settings: null,
   setSettings: (settings) => set({ settings }),
 
-  // Search
+  incomingLinks: [],
+  incomingLinksExpire: false,
+  showIncomingLinks: (links, expire = false) =>
+    set({ incomingLinks: links, incomingLinksExpire: expire }),
+  dismissIncomingLinks: () => set({ incomingLinks: [] }),
+
   searchQuery: "",
   setSearchQuery: (query) => set({ searchQuery: query }),
 
-  // Modals
   isAddBookmarkOpen: false,
   setIsAddBookmarkOpen: (open) => set({ isAddBookmarkOpen: open }),
-  isSettingsOpen: false,
-  setIsSettingsOpen: (open) => set({ isSettingsOpen: open }),
   guestOcclusionDepth: 0,
   guestOcclusionEpoch: 0,
   guestOcclusionPrimeEpoch: 0,
@@ -220,17 +188,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   guestOcclusionReady: true,
   completeGuestOcclusion: () => set({ guestOcclusionReady: true }),
 
-  // Initialize data from the desktop host
   initializeData: async () => {
-    if (window.limbo) {
-      const [bookmarks, library, downloads, torrents, settings] = await Promise.all([
-        window.limbo.getBookmarks(),
-        window.limbo.getLibrary(),
-        window.limbo.getDownloads(),
-        window.limbo.getTorrents(),
-        window.limbo.getSettings(),
-      ]);
-      set({ bookmarks, library, downloads, torrents, settings });
-    }
+    const [bookmarks, library, downloads, torrents, settings] = await Promise.all([
+      commands.bookmarksList(),
+      commands.libraryList(),
+      commands.downloadsList(),
+      commands.torrentsList(),
+      commands.settingsGet(),
+    ]);
+    set({ bookmarks, library, downloads, torrents, settings });
   },
 }));

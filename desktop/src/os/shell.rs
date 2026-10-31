@@ -6,19 +6,12 @@ use std::process::Command;
 pub enum ShellError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("failed to open: {0}")]
-    Open(String),
     #[error("unsupported URL scheme")]
     UnsupportedScheme,
-    #[error("path does not exist")]
-    MissingPath,
 }
 
-pub fn open_path(path: &str) -> Result<(), ShellError> {
-    if !Path::new(path).exists() {
-        return Err(ShellError::MissingPath);
-    }
-    open::that(path).map_err(|e| ShellError::Open(e.to_string()))
+pub fn open_path(path: &Path) -> Result<(), ShellError> {
+    Ok(open::that_detached(path)?)
 }
 
 pub fn open_external(url: &str) -> Result<(), ShellError> {
@@ -26,38 +19,29 @@ pub fn open_external(url: &str) -> Result<(), ShellError> {
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(ShellError::UnsupportedScheme);
     }
-    open::that(url).map_err(|e| ShellError::Open(e.to_string()))
+    Ok(open::that_detached(parsed.as_str())?)
 }
 
-pub fn show_in_folder(path: &str) -> Result<(), ShellError> {
-    let target = Path::new(path);
-    if !target.exists() {
-        return Err(ShellError::MissingPath);
-    }
+#[cfg(target_os = "windows")]
+pub fn show_in_folder(path: &Path) -> Result<(), ShellError> {
+    Command::new("explorer")
+        .arg(format!("/select,{}", path.display()))
+        .spawn()?;
+    Ok(())
+}
 
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(format!("/select,{}", target.display()))
-            .spawn()?;
-        return Ok(());
-    }
+#[cfg(target_os = "macos")]
+pub fn show_in_folder(path: &Path) -> Result<(), ShellError> {
+    Command::new("open").arg("-R").arg(path).spawn()?;
+    Ok(())
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .args(["-R", &target.to_string_lossy()])
-            .spawn()?;
-        return Ok(());
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let dir = if target.is_dir() {
-            target
-        } else {
-            target.parent().unwrap_or(target)
-        };
-        open::that(dir).map_err(|e| ShellError::Open(e.to_string()))
-    }
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn show_in_folder(path: &Path) -> Result<(), ShellError> {
+    let folder = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    Ok(open::that_detached(folder)?)
 }

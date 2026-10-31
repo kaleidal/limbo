@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { X, Globe, Loader2 } from "lucide-react";
+import { commands } from "@/lib/bindings";
+import { faviconFor, hostnameOf } from "@/lib/transfers";
 
 export function AddBookmarkDialog() {
   const { isAddBookmarkOpen, setIsAddBookmarkOpen, addBookmark } = useAppStore(
@@ -20,48 +22,20 @@ export function AddBookmarkDialog() {
   const [name, setName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const extractDomain = (url: string) => {
-    try {
-      const urlObj = new URL(url.startsWith("http") ? url : `https://${url}`);
-      return urlObj.hostname.replace("www.", "");
-    } catch {
-      return url;
-    }
-  };
-
-  const getFaviconUrl = (url: string) => {
-    try {
-      const urlObj = new URL(url.startsWith("http") ? url : `https://${url}`);
-      return `https://www.google.com/s2/favicons?domain=${urlObj.hostname}&sz=64`;
-    } catch {
-      return "";
-    }
-  };
-
-  const handleUrlChange = (value: string) => {
-    setUrl(value);
-    if (!name) {
-      setName(extractDomain(value));
-    }
-  };
+  const fullUrl = url.startsWith("http") ? url : `https://${url}`;
+  const siteName = name.trim() || hostnameOf(url).replace(/^www\./, "");
 
   const handleAdd = async () => {
     if (!url.trim()) return;
 
     setIsLoading(true);
     try {
-      const fullUrl = url.startsWith("http") ? url : `https://${url}`;
-      const favicon = getFaviconUrl(fullUrl);
-
-      if (window.limbo) {
-        const newBookmark = await window.limbo.addBookmark({
-          name: name || extractDomain(url),
-          url: fullUrl,
-          favicon,
-        });
-        addBookmark(newBookmark);
-      }
-
+      const bookmark = await commands.bookmarksAdd({
+        name: siteName,
+        url: fullUrl,
+        favicon: faviconFor(fullUrl),
+      });
+      addBookmark(bookmark);
       setUrl("");
       setName("");
       setIsAddBookmarkOpen(false);
@@ -101,7 +75,7 @@ export function AddBookmarkDialog() {
               <Input
                 id="site-url"
                 value={url}
-                onChange={(e) => handleUrlChange(e.target.value)}
+                onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://example.com"
                 className="pl-10 bg-neutral-800 border-neutral-700"
                 autoFocus
@@ -115,7 +89,7 @@ export function AddBookmarkDialog() {
               id="site-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Site name"
+              placeholder={url ? siteName : "Site name"}
               className="mt-1 bg-neutral-800 border-neutral-700"
             />
           </div>
@@ -123,7 +97,7 @@ export function AddBookmarkDialog() {
           {url && (
             <div className="flex items-center gap-3 p-3 bg-neutral-800 rounded-lg">
               <img
-                src={getFaviconUrl(url)}
+                src={faviconFor(url)}
                 alt=""
                 className="w-8 h-8"
                 onError={(e) => {
@@ -131,9 +105,9 @@ export function AddBookmarkDialog() {
                 }}
               />
               <div>
-                <p className="font-medium">{name || extractDomain(url)}</p>
+                <p className="font-medium">{siteName}</p>
                 <p className="text-sm text-neutral-500 truncate">
-                  {url.startsWith("http") ? url : `https://${url}`}
+                  {fullUrl}
                 </p>
               </div>
             </div>

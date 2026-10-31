@@ -1,36 +1,34 @@
 use std::path::PathBuf;
 
-pub fn pick_folder(title: &str, default_path: Option<&str>) -> Option<PathBuf> {
-    let mut dialog = rfd::FileDialog::new().set_title(title);
-    if let Some(path) = default_path {
-        dialog = dialog.set_directory(path);
-    }
-    dialog.pick_folder()
-}
+use rfd::AsyncFileDialog;
 
-pub fn pick_file(title: &str, filters: &[(&str, &[&str])]) -> Option<PathBuf> {
-    apply_filters(rfd::FileDialog::new().set_title(title), filters).pick_file()
-}
-
-pub fn pick_files(title: &str, filters: &[(&str, &[&str])]) -> Vec<PathBuf> {
-    apply_filters(rfd::FileDialog::new().set_title(title), filters)
-        .pick_files()
-        .unwrap_or_default()
-}
-
-pub fn save_file(title: &str, default_name: &str, filters: &[(&str, &[&str])]) -> Option<PathBuf> {
-    let dialog = rfd::FileDialog::new()
-        .set_title(title)
-        .set_file_name(default_name);
-    apply_filters(dialog, filters).save_file()
-}
-
-fn apply_filters<'a>(
-    mut dialog: rfd::FileDialog,
-    filters: &[(&'a str, &'a [&'a str])],
-) -> rfd::FileDialog {
-    for (name, extensions) in filters {
-        dialog = dialog.add_filter(*name, extensions);
-    }
+pub async fn pick_folder(title: &str, start: Option<&str>) -> Option<PathBuf> {
+    let dialog = AsyncFileDialog::new().set_title(title);
+    let dialog = match start {
+        Some(path) => dialog.set_directory(path),
+        None => dialog,
+    };
     dialog
+        .pick_folder()
+        .await
+        .map(|handle| handle.path().to_path_buf())
+}
+
+pub async fn pick_json(title: &str) -> Option<PathBuf> {
+    AsyncFileDialog::new()
+        .set_title(title)
+        .add_filter("JSON", &["json"])
+        .pick_file()
+        .await
+        .map(|handle| handle.path().to_path_buf())
+}
+
+pub async fn save_json(title: &str, file_name: &str) -> Option<PathBuf> {
+    AsyncFileDialog::new()
+        .set_title(title)
+        .set_file_name(file_name)
+        .add_filter("JSON", &["json"])
+        .save_file()
+        .await
+        .map(|handle| handle.path().to_path_buf())
 }

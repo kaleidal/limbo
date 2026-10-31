@@ -1,113 +1,97 @@
-use sabine::{BridgeError, SabineWindow};
-use serde_json::{Value, json};
+use sabine::SabineWindow;
+use serde::Serialize;
+use specta::Type;
 
 use crate::api::ApiServer;
 use crate::os;
-use crate::store::schema::{Settings, StoreData};
+use crate::store::schema::{Download, LibraryItem, Settings, TorrentInfo};
 
-use super::{App, ok, register};
+use super::{App, Empty, command, fail, task};
 
-pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
-    window = register(window, "limbo.getSettings", app.clone(), |app, _| {
-        ok(app.store.with(|d| d.settings.clone()))
-    });
-    window = register(window, "limbo.updateSettings", app.clone(), |app, cmd| {
-        let patch = cmd.params;
-        let previous_api = app.store.with(|data| {
-            (
-                data.settings.api_enabled.unwrap_or(true),
-                data.settings
-                    .api_port
-                    .unwrap_or(crate::store::schema::DEFAULT_API_PORT),
-            )
-        });
-        let settings = app
-            .store
-            .with(|data| serde_json::from_value::<Settings>(merge_settings(&data.settings, &patch)))
-            .map_err(|error| BridgeError::new(format!("invalid settings: {error}")))?;
-        let clipboard_monitoring = settings.clipboard_monitoring;
-        app.store
-            .with_mut(|data| data.settings = settings)
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        app.set_clipboard_monitoring(clipboard_monitoring);
-        let next_api = app.store.with(|data| {
-            (
-                data.settings.api_enabled.unwrap_or(true),
-                data.settings
-                    .api_port
-                    .unwrap_or(crate::store::schema::DEFAULT_API_PORT),
-            )
-        });
-        if previous_api != next_api {
-            app.runtime
-                .block_on(ApiServer::reconfigure(app.clone()))
-                .map_err(|error| BridgeError::new(error.to_string()))?;
-        }
-        ok(app.store.with(|d| d.settings.clone()))
-    });
-    window = register(window, "limbo.rotateApiToken", app.clone(), |app, _| {
-        ApiServer::rotate_token(&app).map_err(|error| BridgeError::new(error.to_string()))?;
-        ok(json!({ "success": true }))
-    });
-    window = register(window, "limbo.selectDownloadPath", app.clone(), |app, _| {
-        let current = app.store.with(|d| d.settings.download_path.clone());
-        let path = os::dialogs::pick_folder("Select download folder", Some(&current));
-        ok(path.map(|p| p.to_string_lossy().to_string()))
-    });
-    window = register(window, "limbo.clearData", app.clone(), |app, _| {
-        app.download_manager.cancel_all(&app);
-        let ids = app
-            .store
-            .with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
-        for id in ids {
-            let _ = app
-                .runtime
-                .block_on(app.torrent_engine.remove(&app, &id, false));
-        }
-        let defaults = StoreData::default();
-        app.store
-            .with_mut(|d| {
-                d.downloads.clear();
-                d.torrents.clear();
-                d.library.clear();
-                d.extracted_groups.clear();
-                d.settings = defaults.settings.clone();
-            })
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        app.set_clipboard_monitoring(false);
-        app.runtime
-            .block_on(ApiServer::reconfigure(app.clone()))
-            .map_err(|error| BridgeError::new(error.to_string()))?;
-        ok(json!({
-            "downloads": app.download_manager.list(&app),
-            "torrents": app.torrent_engine.list(&app),
-            "library": app.store.with(|d| d.library.clone()),
-            "settings": app.store.with(|d| d.settings.clone()),
-        }))
-    });
-    window
+#[derive(Serialize, Type)]
+struct ClearedData {
+    downloads: Vec<Download>,
+    torrents: Vec<TorrentInfo>,
+    library: Vec<LibraryItem>,
+    settings: Settings,
 }
 
-fn merge_settings(current: &Settings, patch: &Value) -> Value {
-    let mut value = serde_json::to_value(current).unwrap_or(json!({}));
-    if let (Some(obj), Some(patch_obj)) = (value.as_object_mut(), patch.as_object()) {
-        for (key, patch_value) in patch_obj {
-            if key == "apiToken" {
-                continue;
-            }
-            if key == "debrid"
-                && let (Some(debrid), Some(patch_debrid)) = (
-                    obj.get_mut("debrid").and_then(|v| v.as_object_mut()),
-                    patch_value.as_object(),
-                )
+pub fn attach(window: SabineWindow, app: &App) -> SabineWindow {
+    let window = command(window, "settings.get", app, |app, Empty {}| {
+        Ok(app.store.with(|data| data.settings.clone()))
+    });
+    let window = task(
+        window,
+        "settings.update",
+        app,
+        |app, update: Settings| async move {
+            let (previous, settings) = app
+                .store
+                .with_mut(|data| {
+                    let previous = data.settings.clone();
+                    data.settings = Settings {
+                        api_token: previous.api_token.clone(),
+                        ..update
+                    };
+                    (previous, data.settings.clone())
+                })
+                .map_err(fail)?;
+            app.set_clipboard_monitoring(settings.clipboard_monitoring);
+            if (previous.api_enabled, previous.api_port)
+                != (settings.api_enabled, settings.api_port)
             {
-                for (dkey, dval) in patch_debrid {
-                    debrid.insert(dkey.clone(), dval.clone());
-                }
-                continue;
+                ApiServer::reconfigure(app.clone()).await.map_err(fail)?;
             }
-            obj.insert(key.clone(), patch_value.clone());
-        }
-    }
-    value
+            if previous.max_concurrent_downloads != settings.max_concurrent_downloads {
+                app.download_manager.fill_slots(&app);
+            }
+            Ok(settings)
+        },
+    );
+    let window = command(window, "settings.rotateApiToken", app, |app, Empty {}| {
+        ApiServer::rotate_token(app).map_err(fail)
+    });
+    let window = task(
+        window,
+        "settings.selectDownloadPath",
+        app,
+        |app, Empty {}| async move {
+            let current = app.store.with(|data| data.settings.download_path.clone());
+            let path = os::dialogs::pick_folder("Select download folder", Some(&current)).await;
+            Ok(path.map(|path| path.to_string_lossy().into_owned()))
+        },
+    );
+    task(
+        window,
+        "settings.clearData",
+        app,
+        |app, Empty {}| async move {
+            app.download_manager.cancel_all(&app);
+            for torrent in app.torrent_engine.list(&app) {
+                if let Err(error) = app.torrent_engine.remove(&app, &torrent.id, false).await {
+                    tracing::warn!(torrent_id = %torrent.id, %error, "failed to remove torrent");
+                }
+            }
+            app.store
+                .with_mut(|data| {
+                    data.downloads.clear();
+                    data.torrents.clear();
+                    data.library.clear();
+                    data.extracted_archives.clear();
+                    data.settings = Settings {
+                        download_path: data.settings.download_path.clone(),
+                        ..Settings::default()
+                    };
+                })
+                .map_err(fail)?;
+            app.set_clipboard_monitoring(false);
+            ApiServer::reconfigure(app.clone()).await.map_err(fail)?;
+            Ok(ClearedData {
+                downloads: app.download_manager.list(&app),
+                torrents: app.torrent_engine.list(&app),
+                library: Vec::new(),
+                settings: app.store.with(|data| data.settings.clone()),
+            })
+        },
+    )
 }

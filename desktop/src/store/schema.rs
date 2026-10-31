@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use specta::Type;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Bookmark {
     pub id: String,
@@ -9,24 +10,34 @@ pub struct Bookmark {
     pub favicon: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryItem {
     pub id: String,
     pub name: String,
     pub path: String,
     pub size: u64,
-    #[serde(rename = "dateAdded")]
     pub date_added: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub icon: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub category: Option<String>,
-    #[serde(default)]
-    pub trusted: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadStatus {
+    Pending,
+    Downloading,
+    Paused,
+    Extracting,
+    Completed,
+    Error,
+}
+
+impl DownloadStatus {
+    pub fn is_finished(self) -> bool {
+        matches!(self, Self::Completed | Self::Error)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Download {
     pub id: String,
@@ -35,11 +46,13 @@ pub struct Download {
     pub path: String,
     pub size: u64,
     pub downloaded: u64,
-    pub status: String,
+    pub status: DownloadStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eta: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extract_progress: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,14 +63,38 @@ pub struct Download {
     pub group_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum TorrentStatus {
+    Downloading,
+    Seeding,
+    Paused,
+    Completed,
+    Error,
+}
+
+impl TorrentStatus {
+    pub fn is_done(self) -> bool {
+        matches!(self, Self::Completed | Self::Seeding)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum TorrentSourceKind {
+    #[default]
+    Magnet,
+    File,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TorrentInfo {
     pub id: String,
     pub name: String,
     pub magnet_uri: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_type: Option<String>,
+    #[serde(default)]
+    pub source_type: TorrentSourceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_value: Option<String>,
     pub size: u64,
@@ -67,29 +104,39 @@ pub struct TorrentInfo {
     pub download_speed: f64,
     pub upload_speed: f64,
     pub peers: u32,
-    pub seeds: u32,
-    pub status: String,
+    pub status: TorrentStatus,
     pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub info_hash: Option<String>,
+    #[serde(default)]
+    pub info_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selected_file_index: Option<i64>,
+    pub selected_file_index: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_provided_name: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub keep_alive: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum DebridProvider {
+    RealDebrid,
+    AllDebrid,
+    Premiumize,
+    TorBox,
+}
+
+impl DebridProvider {
+    pub fn supports_torrents(self) -> bool {
+        !matches!(self, Self::Premiumize)
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DebridSettings {
-    pub service: Option<String>,
+    pub service: Option<DebridProvider>,
     pub api_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
@@ -101,27 +148,29 @@ pub struct DebridSettings {
     pub client_secret: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiPromptPolicy {
+    #[default]
+    Always,
+    Off,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub download_path: String,
     pub max_concurrent_downloads: u32,
     pub enable_seeding: bool,
     pub start_on_boot: bool,
     pub require_vpn: bool,
-    #[serde(default)]
     pub clipboard_monitoring: bool,
     pub auto_extract: bool,
     pub delete_archive_after_extract: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_port: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_token: Option<String>,
-    #[serde(default = "default_api_prompt_policy")]
-    pub api_prompt_policy: String,
-    #[serde(default)]
+    pub api_enabled: bool,
+    pub api_port: u16,
+    pub api_token: String,
+    pub api_prompt_policy: ApiPromptPolicy,
     pub trusted_api_clients: Vec<String>,
     pub debrid: DebridSettings,
 }
@@ -146,29 +195,24 @@ impl Default for Settings {
             clipboard_monitoring: false,
             auto_extract: true,
             delete_archive_after_extract: false,
-            api_enabled: Some(true),
-            api_port: Some(DEFAULT_API_PORT),
-            api_token: Some(String::new()),
-            api_prompt_policy: default_api_prompt_policy(),
+            api_enabled: true,
+            api_port: DEFAULT_API_PORT,
+            api_token: String::new(),
+            api_prompt_policy: ApiPromptPolicy::default(),
             trusted_api_clients: Vec::new(),
             debrid: DebridSettings::default(),
         }
     }
 }
 
-fn default_api_prompt_policy() -> String {
-    "always".to_string()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct StoreData {
     pub bookmarks: Vec<Bookmark>,
     pub library: Vec<LibraryItem>,
     pub downloads: Vec<Download>,
     pub torrents: Vec<TorrentInfo>,
-    pub extracted_groups: Vec<String>,
-    #[serde(default)]
+    pub extracted_archives: Vec<String>,
     pub settings: Settings,
 }
 
@@ -188,7 +232,7 @@ impl Default for StoreData {
             library: Vec::new(),
             downloads: Vec::new(),
             torrents: Vec::new(),
-            extracted_groups: Vec::new(),
+            extracted_archives: Vec::new(),
             settings: Settings::default(),
         }
     }

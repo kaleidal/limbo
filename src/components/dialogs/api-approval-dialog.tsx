@@ -1,53 +1,54 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Magnet, ShieldAlert, ShieldCheck } from "lucide-react";
+import { appWindow } from "@lantharos/sabine";
+import { commands, events, type TorrentApprovalRequest } from "@/lib/bindings";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import type { ApiApprovalRequest } from "@/types/desktop.d";
 
 export function ApiApprovalWindow() {
-  const [request, setRequest] = useState<ApiApprovalRequest | null>(null);
+  const [request, setRequest] = useState<TorrentApprovalRequest | null>(null);
   const [remember, setRemember] = useState(false);
 
-  const showRequest = useCallback((next: ApiApprovalRequest) => {
+  const showRequest = useCallback((next: TorrentApprovalRequest) => {
     setRequest(next);
     setRemember(false);
-    window.sabine?.window.show();
-    window.sabine?.window.focus();
+    appWindow.show();
+    appWindow.focus();
   }, []);
 
   const close = useCallback(() => {
     setRequest(null);
     setRemember(false);
-    window.sabine?.window.close();
+    appWindow.close();
   }, []);
 
   const decide = useCallback(async (approved: boolean, rememberDecision: boolean) => {
-    if (!request || !window.limbo) return;
-    const requestId = request.requestId;
-    await window.limbo.decideApiApproval(requestId, approved, rememberDecision).catch(() => undefined);
+    if (!request) return;
+    await commands
+      .approvalDecide({ requestId: request.requestId, approved, remember: rememberDecision })
+      .catch(() => undefined);
     close();
   }, [close, request]);
 
   useEffect(() => {
     let active = true;
-    void window.limbo?.getPendingApiApproval().then((pending) => {
+    void commands.approvalPending().then((pending) => {
       if (active && pending) showRequest(pending);
     });
-    const stopRequested = window.sabine?.bridge.listen("api-approval-requested", (payload) => {
-      if (active) showRequest(payload as unknown as ApiApprovalRequest);
+    const stopRequested = events.approvalRequested((next) => {
+      if (active) showRequest(next);
     });
-    const stopExpired = window.sabine?.bridge.listen("api-approval-expired", (payload) => {
-      const expired = payload as { requestId?: string };
+    const stopExpired = events.approvalExpired(({ requestId }) => {
       setRequest((current) => {
-        if (current?.requestId !== expired.requestId) return current;
-        window.sabine?.window.close();
+        if (current?.requestId !== requestId) return current;
+        appWindow.close();
         return null;
       });
     });
     return () => {
       active = false;
-      stopRequested?.();
-      stopExpired?.();
+      stopRequested();
+      stopExpired();
     };
   }, [showRequest]);
 

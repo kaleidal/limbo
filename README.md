@@ -6,12 +6,13 @@ Limbo is a desktop software manager with an integrated browser, download manager
 
 ## What It Does
 
-- Direct HTTP/HTTPS downloads with queue management
-- Torrent downloads from magnet links and `.torrent` files
+- Direct HTTP/HTTPS downloads with a queue, resume, and a limit on how many run at once
+- Torrent downloads from magnet links and `.torrent` files, with optional seeding
 - Real-Debrid, AllDebrid, Premiumize, and TorBox support for supported flows
+- Automatic extraction of zip, 7z, and rar archives, including multi-part sets
 - Embedded browser with bookmarks, popup blocking, and short-lived session memory
-- Local library for downloaded software, media, archives, and other files
-- Magnet and `.torrent` file association support in packaged builds
+- Local library that collects finished downloads alongside folders you add
+- Magnet link and `.torrent` file handling in packaged builds
 
 ## Tech Stack
 
@@ -29,7 +30,7 @@ Users are solely responsible for ensuring they have the legal right to access, d
 
 ## Download
 
-Download the latest Limbo release from [GitHub Releases](https://github.com/kaleidal/limbo/releases/latest). Packages are available for Windows, Apple Silicon Macs, and x86-64 Linux.
+Download the latest Limbo release from [GitHub Releases](https://github.com/kaleidal/limbo/releases/latest). Packages are available for Windows and Linux on x86-64 and ARM64, and for Apple silicon Macs.
 
 The public website is [limbo.kaleid.al](https://limbo.kaleid.al). Its download buttons open the latest installer directly. Stable download links are `/download/windows`, `/download/macos`, and `/download/linux`; macOS requires Apple silicon.
 
@@ -44,13 +45,13 @@ Limbo installs and maintains its shared Sabine Chromium runtime on first launch,
 ### Prerequisites
 
 - [Bun](https://bun.sh)
-- Rust (stable, 1.95+)
+- Rust (stable, 1.98+)
 - Sabine CLI
 
 Install the matching Sabine tools:
 
 ```bash
-cargo install --git https://github.com/Lantharos/Sabine --tag v0.31 sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.61 sabine-cli
 ```
 
 ### Install
@@ -65,12 +66,12 @@ bun install
 bun run dev:desktop
 ```
 
-This lets Sabine own the Vite process on port 5177, prepares the shared Chromium runtime when needed, and runs the Rust host from `desktop/`.
+This lets Sabine own the Vite process on port 5177, prepares the shared Chromium runtime when needed, regenerates the TypeScript bindings in `src/lib/bindings.ts`, and runs the Rust host from `desktop/`.
 
-To run only the Vite UI in a browser:
+The page talks to the Rust host through typed bridge commands. After changing a command, an event, or a type they use, regenerate the bindings:
 
 ```bash
-bun run dev
+sabine bindings .
 ```
 
 ## Build
@@ -93,7 +94,7 @@ bun run build:desktop
 bun run bundle:desktop
 ```
 
-Pass `--target portable`, `--target deb`, `--target msi`, or `--target dmg` directly to `sabine bundle` when you need a specific package format.
+Pass `--target portable`, `--target appimage`, `--target deb`, `--target rpm`, `--target msi`, `--target exe`, or `--target dmg` directly to `sabine bundle` when you need a specific package format.
 
 ## Companion API
 

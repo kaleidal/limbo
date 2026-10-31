@@ -1,7 +1,9 @@
 pub mod api;
 pub mod debrid;
 pub mod downloads;
+pub mod events;
 pub mod ipc;
+pub mod library;
 pub mod net;
 pub mod os;
 pub mod state;

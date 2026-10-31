@@ -5,12 +5,12 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use limbo_desktop::api::ApiServer;
-use limbo_desktop::ipc;
 use limbo_desktop::state::AppState;
 use limbo_desktop::store::Store;
+use limbo_desktop::{events, ipc, library};
 #[cfg(not(target_os = "macos"))]
 use sabine::WindowRegionRect;
-use sabine::{AutostartEntry, DeepLinkRegistration, SingleInstancePolicy, TrayIcon, TrayMenuItem};
+use sabine::{AutostartEntry, SingleInstancePolicy, TrayIcon, TrayMenuItem};
 use sabine::{SabineColor, SabineError, SabineLifecyclePolicy, SabineResult, SabineWindow};
 use tracing_subscriber::EnvFilter;
 
@@ -63,7 +63,6 @@ fn configure_window(
     let start_on_boot = store.with(|data| data.settings.start_on_boot);
     let app = Arc::new(AppState::new(store, handle).map_err(startup_error)?);
     *launched_app.lock() = Some(app.clone());
-    queue_launch_arguments(&app, std::env::args());
     let window = window
         .background_color(SabineColor::rgb8(10, 10, 10))
         .size(1400, 900)
@@ -71,8 +70,7 @@ fn configure_window(
         .title("Limbo");
     let window = platform_window_chrome(window)
         .hide_on_close(true)
-        .tray_icon(tray_icon())
-        .deep_link(DeepLinkRegistration::new(APP_ID, ["magnet"]));
+        .tray_icon(tray_icon());
     let window = match std::env::current_exe() {
         Ok(executable) => window.autostart(AutostartEntry {
             id: APP_ID.to_string(),
@@ -85,13 +83,11 @@ fn configure_window(
             window
         }
     };
-    Ok(ipc::attach(
-        window
-            .single_instance_id(APP_ID)
-            .single_instance(SingleInstancePolicy::ReuseExisting)
-            .lifecycle_policy(SabineLifecyclePolicy::browser_tab().without_hibernation()),
-        app,
-    ))
+    let window = window
+        .single_instance_id(APP_ID)
+        .single_instance(SingleInstancePolicy::FocusExisting)
+        .lifecycle_policy(SabineLifecyclePolicy::browser_tab());
+    Ok(ipc::attach(events::declare(window), app))
 }
 
 #[cfg(target_os = "macos")]
@@ -117,6 +113,15 @@ fn start_app_services(app: Arc<AppState>) {
     let runtime = app.runtime.clone();
     let clipboard_monitoring = app.store.with(|data| data.settings.clipboard_monitoring);
     app.set_clipboard_monitoring(clipboard_monitoring);
+    app.download_manager.restore(&app);
+    {
+        let app = app.clone();
+        runtime.spawn_blocking(move || {
+            if let Err(error) = library::prune_missing(&app) {
+                tracing::error!(%error, "failed to prune missing library items");
+            }
+        });
+    }
 
     {
         let app = Arc::downgrade(&app);
@@ -168,33 +173,15 @@ fn start_app_services(app: Arc<AppState>) {
 }
 
 fn tray_icon() -> TrayIcon {
-    let mut icon = TrayIcon::new(APP_ID, "Limbo");
-    icon.icon_path = resource_path("icon.png");
-    icon.tooltip = Some("Limbo".to_string());
-    icon.menu = vec![
-        TrayMenuItem {
-            id: "open".to_string(),
-            label: "Open Limbo".to_string(),
-            action: Some("open".to_string()),
-            enabled: true,
-            separator: false,
-        },
-        TrayMenuItem {
-            id: "separator".to_string(),
-            label: String::new(),
-            action: None,
-            enabled: false,
-            separator: true,
-        },
-        TrayMenuItem {
-            id: "quit".to_string(),
-            label: "Quit Limbo".to_string(),
-            action: Some("quit".to_string()),
-            enabled: true,
-            separator: false,
-        },
-    ];
-    icon
+    let icon = TrayIcon::new(APP_ID, "Limbo").tooltip("Limbo").menu(vec![
+        TrayMenuItem::new("open", "Open Limbo"),
+        TrayMenuItem::separator(),
+        TrayMenuItem::new("quit", "Quit Limbo"),
+    ]);
+    match resource_path("icon.png") {
+        Some(path) => icon.icon(path),
+        None => icon,
+    }
 }
 
 fn resource_path(file_name: &str) -> Option<PathBuf> {
@@ -222,16 +209,6 @@ fn resource_path(file_name: &str) -> Option<PathBuf> {
             .map(|directory| directory.join("public").join(relative))
             .filter(|path| path.is_file())
     })
-}
-
-fn queue_launch_arguments(app: &AppState, arguments: impl IntoIterator<Item = String>) {
-    for argument in arguments {
-        if argument.starts_with("magnet:") {
-            app.push_event("magnet-link-opened", serde_json::Value::String(argument));
-        } else if argument.to_ascii_lowercase().ends_with(".torrent") {
-            app.push_event("torrent-file-opened", serde_json::Value::String(argument));
-        }
-    }
 }
 
 fn data_dir() -> SabineResult<PathBuf> {

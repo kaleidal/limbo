@@ -6,6 +6,9 @@ maintainer = "Kaleidal <hello@kaleid.al>"
 version = "1.4.21"
 icon = "public/icon.png"
 cargo_manifest = "desktop/Cargo.toml"
+generic_name = "Download Manager"
+categories = ["Network", "FileTransfer", "P2P"]
+keywords = ["torrent", "download", "magnet", "debrid", "bittorrent"]
 mime_types = ["x-scheme-handler/magnet", "application/x-bittorrent"]
 
 [web]
@@ -14,6 +17,13 @@ dist = "web-dist"
 entry = "web-dist/index.html"
 dev_port = 5177
 build = "bun run build"
+
+[bindings]
+path = "src/lib/bindings.ts"
+
+[sandbox]
+unsandboxed = true
+reason = "It saves downloads to and opens files from any folder or drive you choose, and accepts torrent peers on your network."
 
 [updates]
 provider = "github"

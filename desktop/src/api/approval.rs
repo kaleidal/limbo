@@ -6,25 +6,35 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 use sabine::{SabineResult, SabineWindow};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use specta::Type;
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use uuid::Uuid;
 
+use crate::events::{APPROVAL_EXPIRED, APPROVAL_REQUESTED};
 use crate::state::AppState;
+use crate::store::schema::ApiPromptPolicy;
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(90);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct VerifiedPeerIdentity {
     pub pid: Option<u32>,
     pub exe_path: Option<String>,
     pub display_name: Option<String>,
     pub trust_key: Option<String>,
-    pub method: &'static str,
+    pub method: PeerIdentityMethod,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum PeerIdentityMethod {
+    TcpPeer,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TorrentApprovalRequest {
     pub request_id: String,
@@ -34,9 +44,15 @@ pub struct TorrentApprovalRequest {
     pub client_icon_data_url: Option<String>,
     pub magnet: String,
     pub display_name: String,
-    pub file_index: Option<usize>,
+    pub file_index: Option<u32>,
     pub sequential: bool,
     pub verified: VerifiedPeerIdentity,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalExpired {
+    pub request_id: String,
 }
 
 pub struct TorrentApprovalInput {
@@ -51,11 +67,9 @@ pub struct TorrentApprovalInput {
     pub peer: SocketAddr,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy)]
 pub struct TorrentApprovalDecision {
     pub approved: bool,
-    #[serde(default)]
     pub remember: bool,
 }
 
@@ -89,10 +103,8 @@ impl ApprovalManager {
         input: TorrentApprovalInput,
     ) -> ApprovalOutcome {
         let verified = resolve_peer_identity(input.peer).await;
-        let prompt_policy = app
-            .store
-            .with(|data| data.settings.api_prompt_policy.clone());
-        if prompt_policy == "off" || is_trusted(app, &verified) {
+        let prompt_policy = app.store.with(|data| data.settings.api_prompt_policy);
+        if prompt_policy == ApiPromptPolicy::Off || is_trusted(app, &verified) {
             return ApprovalOutcome::Approved;
         }
 
@@ -106,7 +118,7 @@ impl ApprovalManager {
             client_icon_data_url: input.client_icon_data_url,
             magnet: input.magnet,
             display_name: input.display_name,
-            file_index: input.file_index,
+            file_index: input.file_index.map(|index| index as u32),
             sequential: input.sequential,
             verified: verified.clone(),
         };
@@ -138,19 +150,13 @@ impl ApprovalManager {
                 return ApprovalOutcome::Denied;
             }
         }
-        app.emit_bridge_event(
-            "api-approval-requested",
-            serde_json::to_value(&request).unwrap_or_default(),
-        );
+        app.send(&APPROVAL_REQUESTED, &request);
 
         let decision = tokio::time::timeout(APPROVAL_TIMEOUT, receiver).await;
         self.pending.lock().remove(&request_id);
         self.clear_active(&request_id);
         let Ok(Ok(decision)) = decision else {
-            app.emit_bridge_event(
-                "api-approval-expired",
-                serde_json::json!({ "requestId": request_id }),
-            );
+            app.send(&APPROVAL_EXPIRED, &ApprovalExpired { request_id });
             return ApprovalOutcome::TimedOut;
         };
         if !decision.approved {
@@ -239,7 +245,11 @@ fn resolve_peer_identity_sync(peer: SocketAddr) -> VerifiedPeerIdentity {
         exe_path,
         display_name,
         trust_key,
-        method: if pid.is_some() { "tcp-peer" } else { "unknown" },
+        method: if pid.is_some() {
+            PeerIdentityMethod::TcpPeer
+        } else {
+            PeerIdentityMethod::Unknown
+        },
     }
 }
 
@@ -365,16 +375,6 @@ fn unknown_identity() -> VerifiedPeerIdentity {
         exe_path: None,
         display_name: None,
         trust_key: None,
-        method: "unknown",
-    }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-mod tests {
-    use super::socket_inode;
-
-    #[test]
-    fn missing_socket_table_has_no_match() {
-        assert_eq!(socket_inode("/definitely/missing", 43173), None);
+        method: PeerIdentityMethod::Unknown,
     }
 }

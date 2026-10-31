@@ -15,7 +15,8 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { Bookmark } from "@/types/desktop.d";
+import { commands, type Bookmark } from "@/lib/bindings";
+import { faviconFor } from "@/lib/transfers";
 
 export function Sidebar() {
   const {
@@ -55,12 +56,12 @@ export function Sidebar() {
   };
 
   const handleSaveEdit = async () => {
-    if (!editingBookmark || !window.limbo) return;
-    const updated = await window.limbo.updateBookmark({
+    if (!editingBookmark) return;
+    const updated = await commands.bookmarksUpdate({
       ...editingBookmark,
       url: editUrl,
       name: editName,
-      favicon: `https://www.google.com/s2/favicons?domain=${new URL(editUrl.startsWith('http') ? editUrl : 'https://' + editUrl).hostname}&sz=64`,
+      favicon: faviconFor(editUrl),
     });
     useAppStore.getState().setBookmarks(updated);
     setEditingBookmark(null);
@@ -78,13 +79,11 @@ export function Sidebar() {
 
   const handleRemoveBookmark = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (window.limbo) {
-      const updated = await window.limbo.removeBookmark(id);
-      useAppStore.getState().setBookmarks(updated);
-      if (activeBookmark?.id === id) {
-        setActiveBookmark(null);
-        setCurrentView("library");
-      }
+    const updated = await commands.bookmarksRemove({ id });
+    useAppStore.getState().setBookmarks(updated);
+    if (activeBookmark?.id === id) {
+      setActiveBookmark(null);
+      setCurrentView("library");
     }
   };
 

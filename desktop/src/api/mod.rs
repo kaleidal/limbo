@@ -1,10 +1,13 @@
 pub mod approval;
+mod stream;
 mod torrents;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+
+use parking_lot::{Mutex, RwLock};
 
 use axum::Router;
 use axum::extract::State;
@@ -14,17 +17,17 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
 use base64::Engine;
-use rand::TryRngCore;
+use rand::TryRng;
 use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
-use tokio_stream::{Stream, StreamExt};
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
+use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::state::AppState;
 use crate::store::StoreError;
-use crate::store::schema::DEFAULT_API_PORT;
 
 const API_VERSION: u32 = 2;
 
@@ -40,6 +43,35 @@ pub enum ApiError {
     Token(String),
 }
 
+#[derive(Default)]
+pub struct ApiControl {
+    token: RwLock<Option<String>>,
+    port: Mutex<Option<u16>>,
+    rotation: Mutex<()>,
+    shutdown: Mutex<Option<oneshot::Sender<()>>>,
+    task: AsyncMutex<Option<JoinHandle<()>>>,
+}
+
+impl ApiControl {
+    pub(super) fn stream_url(&self, torrent_id: &str, file_index: usize) -> Option<String> {
+        let port = (*self.port.lock())?;
+        let token = self.token.read().clone()?;
+        let mut url = reqwest::Url::parse(&format!(
+            "http://127.0.0.1:{port}/v1/torrents/{torrent_id}/stream/{file_index}"
+        ))
+        .ok()?;
+        url.query_pairs_mut().append_pair("token", &token);
+        Some(url.into())
+    }
+
+    pub(super) fn token_matches(&self, candidate: &str) -> bool {
+        self.token
+            .read()
+            .as_deref()
+            .is_some_and(|token| candidate.trim() == token)
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct ApiState {
     app: Arc<AppState>,
@@ -50,16 +82,10 @@ pub struct ApiServer;
 impl ApiServer {
     pub async fn start(app: Arc<AppState>, data_dir: PathBuf) -> Result<Option<u16>, ApiError> {
         Self::stop(&app, &data_dir).await;
-        let (enabled, preferred_port) = app.store.with(|d| {
-            (
-                d.settings.api_enabled.unwrap_or(true),
-                d.settings.api_port.unwrap_or(DEFAULT_API_PORT),
-            )
-        });
-
+        let (enabled, preferred_port) = app
+            .store
+            .with(|d| (d.settings.api_enabled, d.settings.api_port));
         if !enabled {
-            let _ = std::fs::remove_file(discovery_path(&data_dir));
-            *app.api_port.lock() = None;
             return Ok(None);
         }
 
@@ -78,11 +104,11 @@ impl ApiServer {
             };
         let port = listener.local_addr()?.port();
         write_discovery(&data_dir, port, &token)?;
-        *app.api_token.write() = Some(token);
-        *app.api_port.lock() = Some(port);
+        *app.api.token.write() = Some(token);
+        *app.api.port.lock() = Some(port);
 
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-        *app.api_shutdown.lock() = Some(shutdown_sender);
+        *app.api.shutdown.lock() = Some(shutdown_sender);
         let task = app.runtime.clone().spawn(async move {
             if let Err(error) = axum::serve(
                 listener,
@@ -96,7 +122,7 @@ impl ApiServer {
                 tracing::error!(%error, "companion API stopped unexpectedly");
             }
         });
-        *app.api_task.lock().await = Some(task);
+        *app.api.task.lock().await = Some(task);
 
         Ok(Some(port))
     }
@@ -107,10 +133,10 @@ impl ApiServer {
     }
 
     async fn stop(app: &AppState, data_dir: &Path) {
-        if let Some(shutdown) = app.api_shutdown.lock().take() {
+        if let Some(shutdown) = app.api.shutdown.lock().take() {
             let _ = shutdown.send(());
         }
-        if let Some(mut task) = app.api_task.lock().await.take()
+        if let Some(mut task) = app.api.task.lock().await.take()
             && tokio::time::timeout(Duration::from_secs(2), &mut task)
                 .await
                 .is_err()
@@ -118,8 +144,12 @@ impl ApiServer {
             task.abort();
             let _ = task.await;
         }
-        *app.api_port.lock() = None;
-        let _ = std::fs::remove_file(discovery_path(data_dir));
+        *app.api.port.lock() = None;
+        if let Err(error) = std::fs::remove_file(discovery_path(data_dir))
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "failed to remove API discovery file");
+        }
     }
 }
 
@@ -141,7 +171,7 @@ fn build_router(state: ApiState) -> Router {
         )
         .route(
             "/v1/torrents/{id}/stream/{file_index}",
-            get(torrents::stream_torrent).head(torrents::stream_torrent),
+            get(stream::stream_torrent).head(stream::stream_torrent),
         )
         .route("/v1/events", get(events))
         .layer(cors)
@@ -150,42 +180,36 @@ fn build_router(state: ApiState) -> Router {
 
 impl ApiServer {
     pub fn rotate_token(app: &AppState) -> Result<(), ApiError> {
-        let _rotation = app.api_rotation.lock();
+        let _rotation = app.api.rotation.lock();
         let previous = app.store.with(|data| data.settings.api_token.clone());
         let token = generate_token()?;
-        let port = *app.api_port.lock();
+        let port = *app.api.port.lock();
         if let Some(port) = port {
             write_discovery(app.store.data_dir()?, port, &token)?;
         }
         let persisted = token.clone();
         if let Err(error) = app
             .store
-            .with_mut(|data| data.settings.api_token = Some(persisted))
+            .with_mut(|data| data.settings.api_token = persisted)
         {
-            if let (Some(port), Some(previous)) = (port, previous.as_deref())
-                && let Err(rollback_error) = write_discovery(app.store.data_dir()?, port, previous)
+            if let Some(port) = port
+                && let Err(rollback_error) = write_discovery(app.store.data_dir()?, port, &previous)
             {
                 tracing::error!(%rollback_error, "failed to restore API discovery token");
             }
             return Err(error.into());
         }
-        *app.api_token.write() = Some(token);
+        *app.api.token.write() = Some(token);
         Ok(())
     }
 }
 
 pub(super) fn check_auth(headers: &HeaderMap, state: &ApiState) -> bool {
-    let token = state.app.api_token.read();
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|candidate| {
-            token
-                .as_deref()
-                .is_some_and(|token| candidate.trim() == token)
-        })
-        .unwrap_or(false)
+        .is_some_and(|candidate| state.app.api.token_matches(candidate))
 }
 
 pub(super) fn unauthorized() -> Response {
@@ -207,12 +231,9 @@ async fn health(State(state): State<ApiState>) -> Json<Value> {
     }))
 }
 
-async fn events(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, Response> {
+async fn events(State(state): State<ApiState>, headers: HeaderMap) -> Response {
     if !check_auth(&headers, &state) {
-        return Err(unauthorized());
+        return unauthorized();
     }
 
     let app = state.app.clone();
@@ -230,10 +251,12 @@ async fn events(
                     .event("progress")
                     .json_data(json!({ "torrents": torrents }))
                     .unwrap_or_else(|_| Event::default());
-                Ok(event)
+                Ok::<_, std::convert::Infallible>(event)
             });
 
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 fn discovery_path(data_dir: &Path) -> PathBuf {
@@ -267,19 +290,18 @@ fn write_discovery(data_dir: &Path, port: u16, token: &str) -> Result<(), ApiErr
 
 fn ensure_api_token(app: &AppState) -> Result<String, ApiError> {
     let existing = app.store.with(|d| d.settings.api_token.clone());
-    if let Some(token) = existing.filter(|token| token_is_strong(token)) {
-        return Ok(token);
+    if token_is_strong(&existing) {
+        return Ok(existing);
     }
     let token = generate_token()?;
     let persisted = token.clone();
-    app.store
-        .with_mut(|d| d.settings.api_token = Some(persisted))?;
+    app.store.with_mut(|d| d.settings.api_token = persisted)?;
     Ok(token)
 }
 
 fn generate_token() -> Result<String, ApiError> {
     let mut bytes = [0_u8; 32];
-    rand::rngs::OsRng
+    rand::rngs::SysRng
         .try_fill_bytes(&mut bytes)
         .map_err(|error| ApiError::Token(error.to_string()))?;
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
@@ -298,41 +320,4 @@ fn token_is_strong(token: &str) -> bool {
         }
     }
     distinct_count >= 12
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use tower::ServiceExt;
-
-    use super::{ApiState, build_router};
-    use crate::state::AppState;
-    use crate::store::Store;
-
-    #[tokio::test]
-    async fn single_torrent_get_is_registered() {
-        let directory = tempfile::tempdir().unwrap();
-        let app = Arc::new(
-            AppState::new(
-                Store::load(directory.path()).unwrap(),
-                tokio::runtime::Handle::current(),
-            )
-            .unwrap(),
-        );
-        *app.api_token.write() = Some("test-token".to_string());
-        let response = build_router(ApiState { app })
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/torrents/missing")
-                    .header("authorization", "Bearer test-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
 }

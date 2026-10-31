@@ -19,6 +19,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { commands } from "@/lib/bindings";
+import { formatDate, formatSize } from "@/lib/format";
 
 type Category = "all" | "videos" | "games" | "archives" | "other";
 
@@ -93,48 +95,20 @@ export function LibraryView() {
     });
   }, [library, searchQuery, activeCategory]);
 
-  const formatSize = (bytes: number) => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  const handleOpenLocation = (path: string) => {
+    void commands.filesReveal({ path }).catch((error) => console.error("Failed to show file:", error));
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
+  const handleOpenFile = (path: string) => {
+    void commands.filesOpen({ path }).catch((error) => console.error("Failed to open file:", error));
   };
 
-  const handleOpenLocation = async (path: string) => {
-    if (window.limbo) {
-      await window.limbo.openFileLocation(path);
-    }
-  };
-
-  const handleOpenFile = async (path: string) => {
-    if (window.limbo) {
-      await window.limbo.openFile(path);
-    }
-  };
-
-  const handleRemove = async (id: string, deleteFiles: boolean) => {
-    if (window.limbo) {
-      const updated = await window.limbo.removeFromLibrary(id, deleteFiles);
-      useAppStore.getState().setLibrary(updated);
-    }
+  const handleRemove = async (id: string) => {
+    useAppStore.getState().setLibrary(await commands.libraryRemove({ id }));
   };
 
   const handleAddFolder = async () => {
-    if (window.limbo) {
-      const item = await window.limbo.addFolderToLibrary();
-      if (item) {
-        useAppStore.getState().addToLibrary(item);
-      }
-    }
+    await commands.libraryAddFolder();
   };
 
   const iconColors: Record<Category, string> = {
@@ -274,7 +248,7 @@ export function LibraryView() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleRemove(item.id, false);
+                          handleRemove(item.id);
                         }}
                         className="p-2 bg-red-500 rounded-full hover:bg-red-400 transition-colors"
                       >
@@ -379,7 +353,7 @@ export function LibraryView() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleRemove(item.id, false);
+                            handleRemove(item.id);
                           }}
                           className="p-1.5 hover:bg-red-500/20 text-red-500 rounded transition-colors"
                           title="Remove"

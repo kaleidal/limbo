@@ -1,237 +1,122 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Download, X, Link, Magnet, Zap, AlertCircle, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { commands } from "@/lib/bindings";
+import { errorMessage, isMagnet, isVpnRequired, magnetName } from "@/lib/transfers";
 import { useAppStore } from "@/store/app-store";
 
+const EXPIRY_MS = 20_000;
+const FILE_HOSTS = /rapidgator|nitroflare|uploadgig|1fichier|mediafire|turbobit|katfile|filefactory/i;
+
+function friendlyError(error: unknown) {
+  if (isVpnRequired(error)) {
+    return "VPN required for torrents. Connect a VPN or turn off the check in Settings.";
+  }
+  return errorMessage(error) || "Download failed";
+}
+
+function summary(links: string[]) {
+  if (links.length === 1) {
+    const [link] = links;
+    if (isMagnet(link)) return magnetName(link);
+    return link.length > 50 ? `${link.slice(0, 50)}…` : link;
+  }
+  const magnets = links.filter(isMagnet).length;
+  const others = links.length - magnets;
+  return [
+    magnets > 0 ? `${magnets} magnet${magnets > 1 ? "s" : ""}` : null,
+    others > 0 ? `${others} link${others > 1 ? "s" : ""}` : null,
+  ]
+    .filter(Boolean)
+    .join(" + ");
+}
+
 export function ClipboardMonitor() {
-  const [detectedUrls, setDetectedUrls] = useState<string[]>([]);
-  const [isVisible, setIsVisible] = useState(false);
-  const [debridAvailable, setDebridAvailable] = useState(false);
-  const [debridSupportedForDetectedUrls, setDebridSupportedForDetectedUrls] = useState(false);
-  const [torrentSupported, setTorrentSupported] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successCount, setSuccessCount] = useState(0);
-  const hideTimerRef = useRef<number | null>(null);
-  const { setCurrentView, setActiveBookmark } = useAppStore(
+  const { links, expire, dismiss, debridAvailable } = useAppStore(
     useShallow((state) => ({
-      setCurrentView: state.setCurrentView,
-      setActiveBookmark: state.setActiveBookmark,
+      links: state.incomingLinks,
+      expire: state.incomingLinksExpire,
+      dismiss: state.dismissIncomingLinks,
+      debridAvailable: !!state.settings?.debrid.service && !!state.settings.debrid.apiKey,
     })),
   );
-  const scheduleHide = useCallback((delay: number, clearUrls = false) => {
-    if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = window.setTimeout(() => {
-      setIsVisible(false);
-      if (clearUrls) setDetectedUrls([]);
-      hideTimerRef.current = null;
-    }, delay);
-  }, []);
+  const [debridSupported, setDebridSupported] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [startedCount, setStartedCount] = useState(0);
 
   useEffect(() => {
-    if (!window.limbo) return;
-
-    // Check debrid and torrent support
-    const checkSupport = async () => {
-      const [debrid, torrent] = await Promise.all([
-        window.limbo.isDebridConfigured(),
-        window.limbo.isTorrentSupported(),
-      ]);
-      setDebridAvailable(debrid);
-      setTorrentSupported(torrent);
-    };
-    checkSupport();
-
-    // Listen for clipboard detections from main process (now receives array)
-    const unsubClipboard = window.limbo.onClipboardDownloadDetected((urls: string[]) => {
-      // Don't show if we're already in browser view viewing a site (let browser handle magnets)
-      if (useAppStore.getState().currentView === "browser") {
-        // Only show for non-magnet links when in browser
-        const nonMagnetUrls = urls.filter(u => !u.startsWith("magnet:"));
-        if (nonMagnetUrls.length > 0) {
-          setDetectedUrls(nonMagnetUrls);
-          setIsVisible(true);
-          setError(null);
-          setSuccessCount(0);
-        }
-      } else {
-        setDetectedUrls(urls);
-        setIsVisible(true);
-        setError(null);
-        setSuccessCount(0);
-      }
-      
-      // Auto-hide after 20 seconds
-      scheduleHide(20_000);
-    });
-
-    // Listen for magnet links opened from OS (always show these)
-    const unsubMagnet = window.limbo.onMagnetLinkOpened((magnetUri: string) => {
-      setDetectedUrls([magnetUri]);
-      setIsVisible(true);
-      setError(null);
-      setSuccessCount(0);
-    });
-
-    return () => {
-      unsubClipboard();
-      unsubMagnet();
-      if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
-    };
-  }, [scheduleHide]);
+    setError(null);
+    setStartedCount(0);
+    if (!expire || links.length === 0) return;
+    const timer = window.setTimeout(dismiss, EXPIRY_MS);
+    return () => window.clearTimeout(timer);
+  }, [dismiss, expire, links]);
 
   useEffect(() => {
-    if (!window.limbo || !debridAvailable || detectedUrls.length === 0) {
-      return;
-    }
-
+    setDebridSupported(false);
+    if (!debridAvailable || links.length === 0) return;
     let cancelled = false;
-    const checkSupport = async () => {
-      const nonMagnetUrls = detectedUrls.filter((url) => !url.startsWith("magnet:"));
-      if (nonMagnetUrls.length === 0) {
-        if (!cancelled) {
-          setDebridSupportedForDetectedUrls(true);
-        }
-        return;
-      }
-
-      const supportChecks = await Promise.all(
-        nonMagnetUrls.map((url) => window.limbo.isDebridUrlSupported(url).catch(() => false))
-      );
-
-      if (!cancelled) {
-        setDebridSupportedForDetectedUrls(supportChecks.every(Boolean));
-      }
-    };
-
-    checkSupport();
+    const webLinks = links.filter((link) => !isMagnet(link));
+    void Promise.all(
+      webLinks.map((url) => commands.debridUrlSupported({ url }).catch(() => false)),
+    ).then((supported) => {
+      if (!cancelled) setDebridSupported(supported.every(Boolean));
+    });
     return () => {
       cancelled = true;
     };
-  }, [debridAvailable, detectedUrls]);
+  }, [debridAvailable, links]);
 
-  const getFriendlyError = (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("VPN_REQUIRED")) {
-      return "VPN required for torrents. Enable VPN or disable check in Settings.";
-    }
-    if (message.includes("Error invoking remote method")) {
-      const match = message.match(/Error invoking remote method '[^']+': (.+)/);
-      return match?.[1] || message;
-    }
-    return message || "Download failed";
-  };
+  if (links.length === 0) return null;
 
-  const handleDownloadAll = async (useDebrid: boolean) => {
-    if (!detectedUrls.length || !window.limbo) return;
+  const hasMagnets = links.some(isMagnet);
+  const offerDebrid = debridAvailable && debridSupported;
+  const countSuffix = links.length > 1 ? ` (${links.length})` : "";
+
+  const downloadAll = async (useDebrid: boolean) => {
     setIsProcessing(true);
     setError(null);
-    setSuccessCount(0);
+    setStartedCount(0);
 
-    let completed = 0;
+    let started = 0;
     const errors: string[] = [];
     const warnings: string[] = [];
-
-    for (const url of detectedUrls) {
+    for (const link of links) {
       try {
-        if (url.startsWith("magnet:")) {
-          if (useDebrid && debridAvailable) {
-            await window.limbo.convertMagnetDebrid(url);
-          } else if (torrentSupported) {
-            await window.limbo.addTorrent(url);
-          } else {
-            errors.push("Torrent support unavailable");
-            continue;
-          }
+        if (isMagnet(link) && useDebrid) {
+          await commands.debridDownloadMagnet({ magnetUri: link });
+        } else if (isMagnet(link)) {
+          await commands.torrentsAdd({ magnetUri: link });
         } else {
-          const result = await window.limbo.startDownload(url, { useDebrid });
-          // Track debrid errors but still count as completed since download was attempted
-          if (result.debridError) {
-            warnings.push(result.debridError);
-          }
-          if (result.warning) {
-            warnings.push(result.warning);
-          }
+          const { debridError } = await commands.downloadsStart({ url: link, useDebrid });
+          if (debridError) warnings.push(`${debridError}. Downloading directly instead.`);
         }
-        completed++;
-        setSuccessCount(completed);
-      } catch (error: unknown) {
-        errors.push(getFriendlyError(error));
+        started++;
+        setStartedCount(started);
+      } catch (failure) {
+        errors.push(friendlyError(failure));
       }
     }
-
     setIsProcessing(false);
 
-    if (completed > 0) {
-      setActiveBookmark(null);
-      // Switch to downloads view
-      setCurrentView("downloads");
-      
-      // If any URLs were magnets and not using debrid, trigger switch to torrents tab
-      // Use a timeout to ensure the DownloadsView is mounted first
-      const hasMagnets = detectedUrls.some(u => u.startsWith("magnet:"));
-      if (hasMagnets && !useDebrid) {
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('switch-to-torrents'));
-        }, 100);
-      }
-      
-      // Show debrid warning if there were issues but downloads still started
-      if (warnings.length > 0 && errors.length === 0) {
-        // Show the first warning - these are non-fatal
-        setError(`Warning: ${warnings[0]}`);
-        // Keep visible longer for warnings
-        scheduleHide(5_000, true);
-      } else {
-        // Hide after short delay on success
-        scheduleHide(1_500, true);
-      }
-    }
-
     if (errors.length > 0) {
-      // Check if it's a file host issue
-      const isFileHostError = detectedUrls.some(url => 
-        /rapidgator|nitroflare|uploadgig|1fichier|mediafire|turbobit|katfile|filefactory/i.test(url)
+      const needsDebrid = !debridAvailable && links.some((link) => FILE_HOSTS.test(link));
+      setError(
+        needsDebrid
+          ? "This file host needs a Debrid service. Set one up in Settings."
+          : `${errors.length} failed: ${errors[0]}`,
       );
-      
-      if (isFileHostError && !debridAvailable) {
-        setError("File host requires Debrid service. Configure in Settings -> Debrid Service.");
-      } else {
-        setError(`${errors.length} failed: ${errors[0]}`);
-      }
+    } else if (warnings.length > 0) {
+      setError(warnings[0]);
+    }
+
+    if (started > 0) {
+      useAppStore.getState().showDownloads(hasMagnets && !useDebrid ? "torrents" : "downloads");
+      if (errors.length === 0) window.setTimeout(dismiss, warnings.length > 0 ? 5_000 : 1_500);
     }
   };
-
-  const handleDismiss = () => {
-    if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
-    setIsVisible(false);
-    setDetectedUrls([]);
-    setError(null);
-    setDebridSupportedForDetectedUrls(false);
-  };
-
-  if (!isVisible || detectedUrls.length === 0) return null;
-
-  const magnetCount = detectedUrls.filter(u => u.startsWith("magnet:")).length;
-  const linkCount = detectedUrls.length - magnetCount;
-  
-  const getDisplayText = () => {
-    if (detectedUrls.length === 1) {
-      const url = detectedUrls[0];
-      if (url.startsWith("magnet:")) {
-        return decodeURIComponent(url.match(/dn=([^&]+)/)?.[1] || "Magnet Link");
-      }
-      return url.length > 50 ? url.substring(0, 50) + "..." : url;
-    }
-    
-    const parts = [];
-    if (magnetCount > 0) parts.push(`${magnetCount} magnet${magnetCount > 1 ? "s" : ""}`);
-    if (linkCount > 0) parts.push(`${linkCount} link${linkCount > 1 ? "s" : ""}`);
-    return parts.join(" + ");
-  };
-
-  const hasMagnets = magnetCount > 0;
 
   return (
     <div className="fixed bottom-4 right-4 z-50 animate-in slide-in-from-right-5 fade-in duration-300">
@@ -246,16 +131,18 @@ export function ClipboardMonitor() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-neutral-100">
-              {detectedUrls.length === 1 
-                ? (hasMagnets ? "Magnet Link Detected" : "Download Link Detected")
-                : `${detectedUrls.length} Links Detected`}
+              {links.length === 1
+                ? hasMagnets
+                  ? "Magnet link"
+                  : "Download link"
+                : `${links.length} links`}
             </p>
-            <p className="text-xs text-neutral-400 truncate mt-1" title={detectedUrls.join("\n")}>
-              {getDisplayText()}
+            <p className="text-xs text-neutral-400 truncate mt-1" title={links.join("\n")}>
+              {summary(links)}
             </p>
           </div>
           <button
-            onClick={handleDismiss}
+            onClick={dismiss}
             className="p-1 hover:bg-neutral-800 rounded transition-colors shrink-0"
           >
             <X className="w-4 h-4 text-neutral-500" />
@@ -265,63 +152,56 @@ export function ClipboardMonitor() {
         {error && (
           <div className="flex items-center gap-2 mt-3 p-2 bg-red-950/50 border border-red-900/50 rounded text-red-400 text-xs">
             <AlertCircle className="w-3 h-3 shrink-0" />
-            <span className="truncate">{error}</span>
+            <span className="truncate" title={error}>
+              {error}
+            </span>
           </div>
         )}
 
-        {successCount > 0 && isProcessing && (
+        {startedCount > 0 && isProcessing && (
           <div className="flex items-center gap-2 mt-3 p-2 bg-lime-950/50 border border-lime-900/50 rounded text-lime-400 text-xs">
             <CheckCircle className="w-3 h-3 shrink-0" />
-            <span>Started {successCount} of {detectedUrls.length}</span>
+            <span>
+              Started {startedCount} of {links.length}
+            </span>
           </div>
         )}
 
         <div className="flex flex-col gap-2 mt-3">
-          {/* Debrid option (preferred for magnets) */}
-          {debridAvailable && debridSupportedForDetectedUrls && (
+          {offerDebrid && (
             <Button
-              onClick={() => handleDownloadAll(true)}
+              onClick={() => downloadAll(true)}
               disabled={isProcessing}
-              size="sm"
-              className="w-full gap-2 bg-linear-to-r from-lime-600 to-green-600 hover:from-lime-500 hover:to-green-500"
-            >
-              <Zap className="w-4 h-4" />
-              {isProcessing ? `Processing...` : `Download via Debrid${detectedUrls.length > 1 ? ` (${detectedUrls.length})` : ""}`}
-            </Button>
-          )}
-
-          {/* Direct download option */}
-          {(!hasMagnets || torrentSupported) && (
-            <Button
-              onClick={() => handleDownloadAll(false)}
-              disabled={isProcessing}
-              variant={debridAvailable && debridSupportedForDetectedUrls ? "outline" : "default"}
               size="sm"
               className="w-full gap-2"
             >
-              <Download className="w-4 h-4" />
-              {isProcessing
-                ? "Processing..."
-                : hasMagnets
-                ? `Download via Torrent${detectedUrls.length > 1 ? ` (${detectedUrls.length})` : ""}`
-                : `Direct Download${detectedUrls.length > 1 ? ` (${detectedUrls.length})` : ""}`}
+              <Zap className="w-4 h-4" />
+              {isProcessing ? "Starting…" : `Download via Debrid${countSuffix}`}
             </Button>
           )}
 
-          {/* Show warning if no options available for magnet */}
-          {hasMagnets && !torrentSupported && !debridAvailable && (
+          <Button
+            onClick={() => downloadAll(false)}
+            disabled={isProcessing}
+            variant={offerDebrid ? "outline" : "default"}
+            size="sm"
+            className="w-full gap-2"
+          >
+            <Download className="w-4 h-4" />
+            {isProcessing
+              ? "Starting…"
+              : hasMagnets
+                ? `Download via torrent${countSuffix}`
+                : `Download directly${countSuffix}`}
+          </Button>
+
+          {!hasMagnets && debridAvailable && !debridSupported && (
             <p className="text-xs text-amber-500 text-center">
-              Configure a Debrid service in Settings to download magnet links
+              Your Debrid service doesn&apos;t support this host
             </p>
           )}
 
-          {!hasMagnets && debridAvailable && !debridSupportedForDetectedUrls && (
-            <p className="text-xs text-amber-500 text-center">
-              This host is not supported by your configured Debrid service
-            </p>
-          )}
-
-          <Button onClick={handleDismiss} variant="ghost" size="sm" className="w-full">
+          <Button onClick={dismiss} variant="ghost" size="sm" className="w-full">
             Dismiss
           </Button>
         </div>

@@ -1,17 +1,23 @@
+mod extract;
+mod finish;
+mod naming;
+mod transfer;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use futures_util::StreamExt;
 use parking_lot::Mutex;
-use tokio::fs::OpenOptions;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
 
+use crate::events::{DOWNLOAD_REMOVED, DOWNLOAD_UPDATED, Removed};
 use crate::state::AppState;
-use crate::store::schema::Download;
+use crate::store::schema::{Download, DownloadStatus};
+
+pub use naming::DownloadGroup;
+use naming::{archive_set, derive_filename, sanitize_filename};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DownloadError {
@@ -23,38 +29,23 @@ pub enum DownloadError {
     Http(#[from] reqwest::Error),
     #[error("store error: {0}")]
     Store(#[from] crate::store::StoreError),
-    #[error("download paused")]
-    Paused,
-    #[error("download cancelled")]
-    Cancelled,
 }
 
-#[derive(Clone)]
-struct DownloadControl {
-    cancel: Arc<AtomicBool>,
-    pause: Arc<AtomicBool>,
-}
-
-struct DownloadTask {
+struct Queued {
     id: String,
     url: String,
     path: PathBuf,
-    offset: u64,
-    control: DownloadControl,
 }
 
-impl DownloadControl {
-    fn new() -> Self {
-        Self {
-            cancel: Arc::new(AtomicBool::new(false)),
-            pause: Arc::new(AtomicBool::new(false)),
-        }
-    }
+#[derive(Default)]
+struct DownloadControl {
+    cancel: AtomicBool,
+    pause: AtomicBool,
 }
 
 pub struct DownloadManager {
     client: reqwest::Client,
-    active: Arc<Mutex<HashMap<String, DownloadControl>>>,
+    active: Mutex<HashMap<String, Arc<DownloadControl>>>,
 }
 
 impl DownloadManager {
@@ -66,8 +57,29 @@ impl DownloadManager {
             .build()?;
         Ok(Self {
             client,
-            active: Arc::new(Mutex::new(HashMap::new())),
+            active: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Queues the downloads the last session left running and starts as many
+    /// as the concurrency limit allows.
+    pub fn restore(&self, app: &Arc<AppState>) {
+        app.store.with_mut_volatile(|data| {
+            for download in &mut data.downloads {
+                match download.status {
+                    DownloadStatus::Downloading => download.status = DownloadStatus::Pending,
+                    DownloadStatus::Extracting => {
+                        download.status = DownloadStatus::Completed;
+                        download.extract_progress = None;
+                        download.extract_status = None;
+                    }
+                    _ => {}
+                }
+                download.speed = None;
+                download.eta = None;
+            }
+        });
+        self.fill_slots(app);
     }
 
     pub fn list(&self, app: &AppState) -> Vec<Download> {
@@ -76,59 +88,47 @@ impl DownloadManager {
 
     pub fn start(
         &self,
-        app: Arc<AppState>,
+        app: &Arc<AppState>,
         url: String,
         filename: Option<String>,
-        dest_dir: Option<String>,
+        group: Option<DownloadGroup>,
     ) -> Result<Download, DownloadError> {
-        let settings = app.store.with(|data| data.settings.clone());
-        let download_dir = dest_dir.unwrap_or(settings.download_path);
+        let download_dir =
+            PathBuf::from(app.store.with(|data| data.settings.download_path.clone()));
         std::fs::create_dir_all(&download_dir)?;
-
-        let name = sanitize_filename(&filename.unwrap_or_else(|| derive_filename(&url)));
-        let full_path = PathBuf::from(&download_dir).join(&name);
-        let id = Uuid::new_v4().to_string();
-
-        let record = Download {
-            id: id.clone(),
-            filename: name,
-            url: url.clone(),
-            path: full_path.to_string_lossy().into_owned(),
-            size: 0,
-            downloaded: 0,
-            status: "pending".to_string(),
-            speed: None,
-            eta: None,
-            extract_progress: None,
-            extract_status: None,
-            group_id: None,
-            group_name: None,
-        };
-
-        app.store
-            .with_mut(|data| data.downloads.push(record.clone()))?;
-        app.push_event(
-            "download-started",
-            serde_json::to_value(&record).unwrap_or_default(),
-        );
-
-        let control = DownloadControl::new();
-        self.active.lock().insert(id.clone(), control.clone());
-
-        let client = self.client.clone();
-        spawn_download(
-            app,
-            client,
-            self.active.clone(),
-            DownloadTask {
-                id,
+        let requested = sanitize_filename(&filename.unwrap_or_else(|| derive_filename(&url)));
+        let group = group
+            .or_else(|| archive_set(&requested).map(|set| DownloadGroup::for_archive_set(&set)));
+        let record = app.store.with_mut(|data| {
+            let path = unused_path(&download_dir, &requested, |path| {
+                data.downloads
+                    .iter()
+                    .any(|download| Path::new(&download.path) == path)
+            });
+            let record = Download {
+                id: Uuid::new_v4().to_string(),
+                filename: path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or(requested),
                 url,
-                path: full_path,
-                offset: 0,
-                control,
-            },
-        );
-
+                path: path.to_string_lossy().into_owned(),
+                size: 0,
+                downloaded: 0,
+                status: DownloadStatus::Pending,
+                speed: None,
+                eta: None,
+                error: None,
+                extract_progress: None,
+                extract_status: None,
+                group_id: group.as_ref().map(|group| group.id.clone()),
+                group_name: group.map(|group| group.name),
+            };
+            data.downloads.push(record.clone());
+            record
+        })?;
+        app.send(&DOWNLOAD_UPDATED, &record);
+        self.fill_slots(app);
         Ok(record)
     }
 
@@ -136,362 +136,219 @@ impl DownloadManager {
         if let Some(control) = self.active.lock().get(id) {
             control.pause.store(true, Ordering::SeqCst);
         }
-        update_download(app, id, |d| {
-            d.status = "paused".to_string();
-            d.speed = None;
-            d.eta = None;
+        update(app, id, |download| {
+            if matches!(
+                download.status,
+                DownloadStatus::Downloading | DownloadStatus::Pending
+            ) {
+                download.status = DownloadStatus::Paused;
+                download.speed = None;
+                download.eta = None;
+            }
         });
     }
 
-    pub fn resume(&self, app: Arc<AppState>, id: &str) -> Result<(), DownloadError> {
+    pub fn resume(&self, app: &Arc<AppState>, id: &str) -> Result<(), DownloadError> {
         if let Some(control) = self.active.lock().get(id) {
             control.pause.store(false, Ordering::SeqCst);
-            update_download(&app, id, |d| d.status = "downloading".to_string());
+            update(app, id, |download| {
+                download.status = DownloadStatus::Downloading
+            });
             return Ok(());
         }
-
-        let record = app
-            .store
-            .with(|data| data.downloads.iter().find(|d| d.id == id).cloned())
-            .ok_or_else(|| DownloadError::NotFound(id.to_string()))?;
-
-        let path = PathBuf::from(&record.path);
-        let offset = std::fs::metadata(&path)
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
-        let control = DownloadControl::new();
-        self.active.lock().insert(id.to_string(), control.clone());
-        update_download(&app, id, |d| {
-            d.downloaded = offset;
-            d.status = "downloading".to_string();
-        });
-
-        let client = self.client.clone();
-        spawn_download(
-            app,
-            client,
-            self.active.clone(),
-            DownloadTask {
-                id: id.to_string(),
-                url: record.url.clone(),
-                path,
-                offset,
-                control,
-            },
-        );
+        update(app, id, |download| {
+            if matches!(
+                download.status,
+                DownloadStatus::Paused | DownloadStatus::Error
+            ) {
+                download.status = DownloadStatus::Pending;
+                download.error = None;
+            }
+        })
+        .ok_or_else(|| DownloadError::NotFound(id.to_string()))?;
+        self.fill_slots(app);
         Ok(())
     }
 
-    pub fn cancel(&self, app: &AppState, id: &str) {
-        let record = app.store.with(|data| {
-            data.downloads
-                .iter()
-                .find(|download| download.id == id)
-                .cloned()
-        });
-        let was_active = if let Some(control) = self.active.lock().remove(id) {
+    pub fn cancel(&self, app: &Arc<AppState>, id: &str) {
+        let removed = app
+            .store
+            .with_mut(|data| {
+                let index = data
+                    .downloads
+                    .iter()
+                    .position(|download| download.id == id)?;
+                Some(data.downloads.remove(index))
+            })
+            .ok()
+            .flatten();
+        let active = self.active.lock().remove(id);
+        if let Some(control) = &active {
             control.cancel.store(true, Ordering::SeqCst);
-            true
-        } else {
-            false
-        };
-        app.store
-            .with_mut(|data| data.downloads.retain(|d| d.id != id))
-            .ok();
-        if !was_active
-            && let Some(record) = record
-            && let Err(error) = std::fs::remove_file(&record.path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::error!(path = %record.path, "failed to remove partial download: {error}");
         }
-        app.push_event(
-            "download-complete",
-            serde_json::json!({ "id": id, "status": "cancelled" }),
-        );
+        if active.is_none()
+            && let Some(download) = removed
+            && !download.status.is_finished()
+        {
+            remove_partial_file(Path::new(&download.path));
+        }
+        app.send(&DOWNLOAD_REMOVED, &Removed { id: id.to_string() });
+        self.fill_slots(app);
     }
 
-    pub fn cancel_all(&self, app: &AppState) {
-        let ids: Vec<String> = app.store.with(|data| {
-            data.downloads
-                .iter()
-                .map(|download| download.id.clone())
-                .collect()
-        });
-        for id in ids {
-            self.cancel(app, &id);
+    pub fn cancel_all(&self, app: &Arc<AppState>) {
+        for download in self.list(app) {
+            self.cancel(app, &download.id);
         }
     }
 
     pub fn pause_all(&self, app: &AppState) {
-        let ids: Vec<String> = self.active.lock().keys().cloned().collect();
-        for id in ids {
-            self.pause(app, &id);
+        for download in self.list(app) {
+            self.pause(app, &download.id);
         }
     }
 
-    pub fn resume_all(&self, app: Arc<AppState>) {
-        let ids: Vec<String> = app.store.with(|data| {
+    pub fn resume_all(&self, app: &Arc<AppState>) {
+        for download in self.list(app) {
+            if download.status == DownloadStatus::Paused
+                && let Err(error) = self.resume(app, &download.id)
+            {
+                tracing::warn!(download_id = %download.id, %error, "failed to resume download");
+            }
+        }
+    }
+
+    pub fn clear_finished(&self, app: &AppState) {
+        if let Err(error) = app.store.with_mut(|data| {
+            data.downloads
+                .retain(|download| !download.status.is_finished())
+        }) {
+            tracing::error!(%error, "failed to clear finished downloads");
+        }
+    }
+
+    /// Starts queued downloads until the concurrency limit is reached.
+    pub fn fill_slots(&self, app: &Arc<AppState>) {
+        let limit =
+            app.store
+                .with(|data| data.settings.max_concurrent_downloads.max(1)) as usize;
+        let mut active = self.active.lock();
+        let queued = app.store.with(|data| {
             data.downloads
                 .iter()
-                .filter(|d| d.status == "paused" || d.status == "pending")
-                .map(|d| d.id.clone())
-                .collect()
+                .filter(|download| {
+                    download.status == DownloadStatus::Pending && !active.contains_key(&download.id)
+                })
+                .take(limit.saturating_sub(active.len()))
+                .map(|download| Queued {
+                    id: download.id.clone(),
+                    url: download.url.clone(),
+                    path: PathBuf::from(&download.path),
+                })
+                .collect::<Vec<_>>()
         });
-        for id in ids {
-            let _ = self.resume(app.clone(), &id);
+        for queued in queued {
+            let control = Arc::new(DownloadControl::default());
+            active.insert(queued.id.clone(), control.clone());
+            self.spawn(app.clone(), queued, control);
         }
     }
 
-    pub fn clear_completed(&self, app: &AppState) {
-        app.store
-            .with_mut(|data| {
-                data.downloads
-                    .retain(|d| d.status != "completed" && d.status != "error")
-            })
-            .ok();
+    fn spawn(&self, app: Arc<AppState>, queued: Queued, control: Arc<DownloadControl>) {
+        let Queued { id, url, path } = queued;
+        let client = self.client.clone();
+        app.clone().spawn(async move {
+            let request = transfer::Request {
+                id: &id,
+                url: &url,
+                path: &path,
+                control: &control,
+            };
+            let result = transfer::run(&client, &app, request).await;
+            {
+                let mut active = app.download_manager.active.lock();
+                if active
+                    .get(&id)
+                    .is_some_and(|current| Arc::ptr_eq(current, &control))
+                {
+                    active.remove(&id);
+                }
+            }
+            app.download_manager.fill_slots(&app);
+            match result {
+                Ok(transfer::Outcome::Finished) => {
+                    if let Some(download) = update(&app, &id, |download| {
+                        download.status = DownloadStatus::Completed;
+                        download.speed = None;
+                        download.eta = None;
+                    }) {
+                        finish::completed(&app, download).await;
+                    }
+                }
+                Ok(transfer::Outcome::Paused) => {}
+                Ok(transfer::Outcome::Cancelled) => remove_partial_file(&path),
+                Err(error) => {
+                    update(&app, &id, |download| {
+                        download.status = DownloadStatus::Error;
+                        download.error = Some(error.to_string());
+                        download.speed = None;
+                        download.eta = None;
+                    });
+                }
+            }
+        });
     }
 }
 
-fn derive_filename(url: &str) -> String {
-    url.rsplit('/')
-        .find(|segment| !segment.is_empty())
-        .map(|segment| segment.split(['?', '#']).next().unwrap_or(segment))
-        .filter(|segment| !segment.is_empty())
-        .unwrap_or("download")
-        .to_string()
+fn update(app: &AppState, id: &str, change: impl FnOnce(&mut Download)) -> Option<Download> {
+    let download = app
+        .store
+        .with_mut(|data| {
+            let download = data
+                .downloads
+                .iter_mut()
+                .find(|download| download.id == id)?;
+            change(download);
+            Some(download.clone())
+        })
+        .ok()
+        .flatten()?;
+    app.send(&DOWNLOAD_UPDATED, &download);
+    Some(download)
 }
 
-fn sanitize_filename(raw: &str) -> String {
-    let candidate = raw.rsplit(['/', '\\']).next().unwrap_or_default();
-    let cleaned: String = candidate
-        .chars()
-        .filter(|character| !matches!(character, '/' | '\\' | ':' | '\0'))
-        .collect();
-    let trimmed = cleaned.trim().trim_matches('.');
-    let stem = trimmed.split('.').next().unwrap_or_default().trim();
-    const WINDOWS_RESERVED_NAMES: [&str; 22] = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-    ];
-    if trimmed.is_empty()
-        || WINDOWS_RESERVED_NAMES
-            .iter()
-            .any(|name| stem.eq_ignore_ascii_case(name))
-    {
-        "download".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn update_download_volatile(
-    app: &AppState,
-    id: &str,
-    f: impl FnOnce(&mut Download),
-) -> Option<Download> {
-    app.store.with_mut_volatile(|data| {
-        let item = data
+fn update_volatile(app: &AppState, id: &str, change: impl FnOnce(&mut Download)) {
+    let download = app.store.with_mut_volatile(|data| {
+        let download = data
             .downloads
             .iter_mut()
             .find(|download| download.id == id)?;
-        f(item);
-        Some(item.clone())
-    })
-}
-
-fn update_download(app: &AppState, id: &str, f: impl FnOnce(&mut Download)) -> Option<Download> {
-    app.store
-        .with_mut(|data| {
-            let item = data.downloads.iter_mut().find(|d| d.id == id)?;
-            f(item);
-            Some(item.clone())
-        })
-        .ok()
-        .flatten()
-}
-
-fn spawn_download(
-    app: Arc<AppState>,
-    client: reqwest::Client,
-    active: Arc<Mutex<HashMap<String, DownloadControl>>>,
-    task: DownloadTask,
-) {
-    app.runtime.clone().spawn(async move {
-        let result = run_download(
-            &client,
-            &app,
-            &task.id,
-            &task.url,
-            &task.path,
-            task.offset,
-            &task.control,
-        )
-        .await;
-        {
-            let mut active = active.lock();
-            if active
-                .get(&task.id)
-                .is_some_and(|current| Arc::ptr_eq(&current.cancel, &task.control.cancel))
-            {
-                active.remove(&task.id);
-            }
-        }
-        match result {
-            Ok(()) => {
-                if let Some(download) = update_download(&app, &task.id, |d| {
-                    d.status = "completed".to_string();
-                    d.speed = None;
-                    d.eta = None;
-                }) {
-                    app.push_event(
-                        "download-complete",
-                        serde_json::json!({ "id": task.id, "status": "completed" }),
-                    );
-                    let _ = download;
-                }
-            }
-            Err(DownloadError::Cancelled) => {
-                if let Err(error) = tokio::fs::remove_file(&task.path).await
-                    && error.kind() != std::io::ErrorKind::NotFound
-                {
-                    tracing::error!(path = %task.path.display(), "failed to remove partial download: {error}");
-                }
-            }
-            Err(DownloadError::Paused) => {}
-            Err(err) => {
-                update_download(&app, &task.id, |d| {
-                    d.status = "error".to_string();
-                    d.extract_status = Some(err.to_string());
-                });
-                app.push_event(
-                    "download-complete",
-                    serde_json::json!({ "id": task.id, "status": "error", "error": err.to_string() }),
-                );
-            }
-        }
+        change(download);
+        Some(download.clone())
     });
+    if let Some(download) = download {
+        app.send(&DOWNLOAD_UPDATED, &download);
+    }
 }
 
-async fn run_download(
-    client: &reqwest::Client,
-    app: &Arc<AppState>,
-    id: &str,
-    url: &str,
-    path: &Path,
-    offset: u64,
-    control: &DownloadControl,
-) -> Result<(), DownloadError> {
-    let mut effective_offset = offset;
-    let mut response = if effective_offset > 0 {
-        client
-            .get(url)
-            .header("Range", format!("bytes={effective_offset}-"))
-            .send()
-            .await?
-    } else {
-        client.get(url).send().await?
+fn unused_path(dir: &Path, filename: &str, taken: impl Fn(&Path) -> bool) -> PathBuf {
+    let (stem, extension) = match filename.split_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
+        _ => (filename, String::new()),
     };
-    if effective_offset > 0 && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-        effective_offset = 0;
-        response = client.get(url).send().await?;
-    }
-    let response = response.error_for_status()?;
-
-    let total = response
-        .content_length()
-        .map(|len| len + effective_offset)
-        .unwrap_or(effective_offset);
-
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(effective_offset == 0)
-        .open(path)
-        .await?;
-    if effective_offset > 0 {
-        file.seek(std::io::SeekFrom::Start(effective_offset))
-            .await?;
-    }
-
-    let mut downloaded = effective_offset;
-    let mut stream = response.bytes_stream();
-    let mut last_emit = Instant::now();
-    let mut bytes_since_emit: u64 = 0;
-
-    update_download(app, id, |d| {
-        d.status = "downloading".to_string();
-        if total > 0 {
-            d.size = total;
-        }
-    });
-
-    loop {
-        if control.cancel.load(Ordering::SeqCst) {
-            return Err(DownloadError::Cancelled);
-        }
-        if control.pause.load(Ordering::SeqCst) {
-            return Err(DownloadError::Paused);
-        }
-        let Some(chunk) = stream.next().await else {
-            break;
-        };
-
-        let bytes = chunk?;
-        file.write_all(&bytes).await?;
-        downloaded += bytes.len() as u64;
-        bytes_since_emit += bytes.len() as u64;
-
-        if last_emit.elapsed().as_millis() >= 500 {
-            let secs = last_emit.elapsed().as_secs_f64().max(0.001);
-            let speed = bytes_since_emit as f64 / secs;
-            let remaining = total.saturating_sub(downloaded);
-            let eta = if speed > 0.0 {
-                Some(remaining as f64 / speed)
-            } else {
-                None
-            };
-
-            update_download_volatile(app, id, |d| {
-                d.downloaded = downloaded;
-                d.speed = Some(speed);
-                d.eta = eta;
-            });
-            app.push_event(
-                "download-progress",
-                serde_json::json!({
-                    "id": id,
-                    "downloaded": downloaded,
-                    "total": total,
-                    "speed": speed,
-                }),
-            );
-            last_emit = Instant::now();
-            bytes_since_emit = 0;
-        }
-    }
-
-    file.flush().await?;
-    update_download(app, id, |d| {
-        d.downloaded = downloaded;
-        if d.size == 0 {
-            d.size = downloaded;
-        }
-    });
-    Ok(())
+    (0..)
+        .map(|copy| match copy {
+            0 => dir.join(filename),
+            copy => dir.join(format!("{stem} ({copy}){extension}")),
+        })
+        .find(|path| !path.exists() && !taken(path))
+        .expect("an unused file name exists")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::sanitize_filename;
-
-    #[test]
-    fn filename_is_reduced_to_one_safe_component() {
-        assert_eq!(sanitize_filename("../../secret.txt"), "secret.txt");
-        assert_eq!(sanitize_filename("/etc/passwd"), "passwd");
-        assert_eq!(sanitize_filename(".."), "download");
-        assert_eq!(sanitize_filename("C:\\temp\\file:name"), "filename");
-        assert_eq!(sanitize_filename("con.txt"), "download");
-        assert_eq!(sanitize_filename(" LPT9 .log"), "download");
+fn remove_partial_file(path: &Path) {
+    if let Err(error) = std::fs::remove_file(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::error!(path = %path.display(), "failed to remove partial download: {error}");
     }
 }

@@ -1,102 +1,95 @@
 use sabine::{BridgeError, SabineWindow};
-use serde_json::json;
+use serde::Deserialize;
+use specta::Type;
 
-use super::{App, err, ok, param_str, register};
+use crate::downloads::DownloadGroup;
 
-pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
-    window = register(window, "limbo.isDebridConfigured", app.clone(), |app, _| {
-        ok(app.debrid.is_configured(&app))
+use super::{App, Empty, command, fail, task};
+
+#[derive(Deserialize, Type)]
+struct Link {
+    url: String,
+}
+
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+struct Magnet {
+    magnet_uri: String,
+}
+
+pub fn attach(window: SabineWindow, app: &App) -> SabineWindow {
+    let window = command(window, "debrid.configured", app, |app, Empty {}| {
+        Ok(app.debrid.is_configured(app))
     });
-    window = register(
+    let window = command(window, "debrid.torrentSupported", app, |app, Empty {}| {
+        Ok(app.debrid.is_torrent_supported(app))
+    });
+    let window = task(
         window,
-        "limbo.isDebridUrlSupported",
-        app.clone(),
-        |app, cmd| {
-            let Some(url) = param_str(&cmd.params, "url") else {
-                return ok(false);
-            };
-            ok(app
-                .runtime
-                .block_on(app.debrid.is_url_supported(&app, &url)))
+        "debrid.urlSupported",
+        app,
+        |app, link: Link| async move { Ok(app.debrid.is_url_supported(&app, &link.url).await) },
+    );
+    let window = task(window, "debrid.hosts", app, |app, Empty {}| async move {
+        app.debrid.get_supported_hosts(&app).await.map_err(fail)
+    });
+    let window = task(
+        window,
+        "debrid.downloadMagnet",
+        app,
+        |app, magnet: Magnet| async move {
+            let links = app
+                .debrid
+                .convert_magnet(&app, &magnet.magnet_uri)
+                .await
+                .map_err(fail)?;
+            start_all(&app, links, DownloadGroup::for_magnet(&magnet.magnet_uri))
         },
     );
-    window = register(
+    let window = task(
         window,
-        "limbo.isDebridTorrentSupported",
-        app.clone(),
-        |app, _| ok(app.debrid.is_torrent_supported(&app)),
-    );
-    window = register(
-        window,
-        "limbo.convertMagnetDebrid",
-        app.clone(),
-        |app, cmd| {
-            let Some(magnet) = param_str(&cmd.params, "magnetUri") else {
-                return err("magnetUri required");
-            };
-            app.runtime
-                .block_on(app.debrid.convert_magnet(&app, &magnet))
-                .map_err(|e| BridgeError::new(e.to_string()))
-                .and_then(ok)
+        "debrid.downloadTorrentFile",
+        app,
+        |app, link: Link| async move {
+            let links = app
+                .debrid
+                .convert_torrent_file(&app, &link.url)
+                .await
+                .map_err(fail)?;
+            start_all(&app, links, DownloadGroup::for_url(&link.url))
         },
     );
-    window = register(
+    let window = task(
         window,
-        "limbo.convertTorrentFileDebrid",
-        app.clone(),
-        |app, cmd| {
-            let Some(url) = param_str(&cmd.params, "torrentUrl") else {
-                return err("torrentUrl required");
-            };
-            app.runtime
-                .block_on(app.debrid.convert_torrent_file(&app, &url))
-                .map_err(|e| BridgeError::new(e.to_string()))
-                .and_then(ok)
-        },
+        "debrid.realDebridLinkStart",
+        app,
+        |app, Empty {}| async move { app.debrid.start_realdebrid_device().await.map_err(fail) },
     );
-    window = register(
+    let window = task(
         window,
-        "limbo.getSupportedHosts",
-        app.clone(),
-        |app, _| match app.runtime.block_on(app.debrid.get_supported_hosts(&app)) {
-            Ok(hosts) => ok(json!({ "hosts": hosts })),
-            Err(error) => ok(json!({ "hosts": [], "error": error.to_string() })),
-        },
+        "debrid.realDebridLinkPoll",
+        app,
+        |app, Empty {}| async move { app.debrid.poll_realdebrid_device(&app).await.map_err(fail) },
     );
-    window = register(
+    command(
         window,
-        "limbo.realDebridDeviceStart",
-        app.clone(),
-        |app, _| match app.runtime.block_on(app.debrid.start_realdebrid_device()) {
-            Ok(start) => ok(json!({
-                "success": true,
-                "userCode": start.user_code,
-                "verificationUrl": start.verification_url,
-                "interval": start.interval,
-                "expiresIn": start.expires_in,
-            })),
-            Err(error) => ok(json!({ "success": false, "error": error.to_string() })),
-        },
-    );
-    window = register(
-        window,
-        "limbo.realDebridDevicePoll",
-        app.clone(),
-        |app, _| {
-            app.runtime
-                .block_on(app.debrid.poll_realdebrid_device(&app))
-                .map_err(|e| BridgeError::new(e.to_string()))
-                .and_then(ok)
-        },
-    );
-    window = register(
-        window,
-        "limbo.realDebridDeviceCancel",
-        app.clone(),
-        |app, _| {
+        "debrid.realDebridLinkCancel",
+        app,
+        |app, Empty {}| {
             app.debrid.cancel_realdebrid_device();
-            ok(json!({ "success": true }))
+            Ok(())
         },
-    );
-    window
+    )
+}
+
+fn start_all(app: &App, links: Vec<String>, group: DownloadGroup) -> Result<u32, BridgeError> {
+    let grouped = links.len() > 1;
+    let mut started = 0;
+    for link in links {
+        app.download_manager
+            .start(app, link, None, grouped.then(|| group.clone()))
+            .map_err(fail)?;
+        started += 1;
+    }
+    Ok(started)
 }

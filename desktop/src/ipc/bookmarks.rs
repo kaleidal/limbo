@@ -1,82 +1,93 @@
-use sabine::{BridgeError, SabineWindow};
-use serde_json::Value;
+use sabine::SabineWindow;
+use serde::Deserialize;
+use specta::Type;
 use uuid::Uuid;
 
 use crate::os;
 use crate::store::schema::{Bookmark, StoreData};
 
-use super::{App, err, ok, param_str, register};
+use super::{App, ById, Empty, command, fail, task};
 
-pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
-    window = register(window, "limbo.getBookmarks", app.clone(), |app, _| {
-        ok(app.store.with(|d| d.bookmarks.clone()))
+#[derive(Deserialize, Type)]
+struct NewBookmark {
+    name: String,
+    url: String,
+    favicon: String,
+}
+
+pub fn attach(window: SabineWindow, app: &App) -> SabineWindow {
+    let window = command(window, "bookmarks.list", app, |app, Empty {}| {
+        Ok(bookmarks(app))
     });
-    window = register(window, "limbo.addBookmark", app.clone(), |app, cmd| {
+    let window = command(window, "bookmarks.add", app, |app, new: NewBookmark| {
         let bookmark = Bookmark {
             id: Uuid::new_v4().to_string(),
-            name: param_str(&cmd.params, "name").unwrap_or_else(|| "Bookmark".into()),
-            url: param_str(&cmd.params, "url").unwrap_or_default(),
-            favicon: param_str(&cmd.params, "favicon").unwrap_or_default(),
+            name: new.name,
+            url: new.url,
+            favicon: new.favicon,
         };
+        let added = bookmark.clone();
         app.store
-            .with_mut(|d| d.bookmarks.push(bookmark.clone()))
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(bookmark)
+            .with_mut(|data| data.bookmarks.push(added))
+            .map_err(fail)?;
+        Ok(bookmark)
     });
-    window = register(window, "limbo.removeBookmark", app.clone(), |app, cmd| {
-        let Some(id) = param_str(&cmd.params, "id") else {
-            return err("id required");
-        };
-        app.store
-            .with_mut(|d| d.bookmarks.retain(|b| b.id != id))
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(app.store.with(|d| d.bookmarks.clone()))
+    let window = command(window, "bookmarks.remove", app, |app, ById { id }| {
+        replace(app, |bookmarks| {
+            bookmarks.retain(|bookmark| bookmark.id != id)
+        })
     });
-    window = register(window, "limbo.updateBookmark", app.clone(), |app, cmd| {
-        let Ok(bookmark) = serde_json::from_value::<Bookmark>(cmd.params.clone()) else {
-            return err("invalid bookmark");
-        };
-        app.store
-            .with_mut(|d| {
-                if let Some(existing) = d.bookmarks.iter_mut().find(|b| b.id == bookmark.id) {
-                    *existing = bookmark;
-                }
-            })
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(app.store.with(|d| d.bookmarks.clone()))
+    let window = command(window, "bookmarks.update", app, |app, update: Bookmark| {
+        replace(app, |bookmarks| {
+            if let Some(existing) = bookmarks.iter_mut().find(|item| item.id == update.id) {
+                *existing = update;
+            }
+        })
     });
-    window = register(window, "limbo.resetBookmarks", app.clone(), |app, _| {
-        let defaults = StoreData::default().bookmarks;
-        app.store
-            .with_mut(|d| d.bookmarks = defaults.clone())
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(defaults)
+    let window = command(window, "bookmarks.reset", app, |app, Empty {}| {
+        replace(app, |bookmarks| *bookmarks = StoreData::default().bookmarks)
     });
-    window = register(window, "limbo.exportBookmarks", app.clone(), |app, _| {
-        let Some(path) = os::dialogs::save_file(
-            "Export bookmarks",
-            "limbo-bookmarks.json",
-            &[("JSON", &["json"])],
-        ) else {
-            return ok(Value::Null);
-        };
-        let bookmarks = app.store.with(|d| d.bookmarks.clone());
-        let json = serde_json::to_string_pretty(&bookmarks)
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        std::fs::write(&path, json).map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(path.to_string_lossy().to_string())
-    });
-    window = register(window, "limbo.importBookmarks", app.clone(), |app, _| {
-        let Some(path) = os::dialogs::pick_file("Import bookmarks", &[("JSON", &["json"])]) else {
-            return ok(Value::Null);
-        };
-        let raw = std::fs::read_to_string(path).map_err(|e| BridgeError::new(e.to_string()))?;
-        let bookmarks: Vec<Bookmark> =
-            serde_json::from_str(&raw).map_err(|e| BridgeError::new(e.to_string()))?;
-        app.store
-            .with_mut(|d| d.bookmarks = bookmarks.clone())
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(bookmarks)
-    });
-    window
+    let window = task(
+        window,
+        "bookmarks.export",
+        app,
+        |app, Empty {}| async move {
+            let Some(path) =
+                os::dialogs::save_json("Export bookmarks", "limbo-bookmarks.json").await
+            else {
+                return Ok(None);
+            };
+            let json = serde_json::to_vec_pretty(&bookmarks(&app)).map_err(fail)?;
+            tokio::fs::write(&path, json).await.map_err(fail)?;
+            Ok(Some(path.to_string_lossy().into_owned()))
+        },
+    );
+    task(
+        window,
+        "bookmarks.import",
+        app,
+        |app, Empty {}| async move {
+            let Some(path) = os::dialogs::pick_json("Import bookmarks").await else {
+                return Ok(None);
+            };
+            let raw = tokio::fs::read(path).await.map_err(fail)?;
+            let imported: Vec<Bookmark> = serde_json::from_slice(&raw).map_err(fail)?;
+            replace(&app, |bookmarks| *bookmarks = imported).map(Some)
+        },
+    )
+}
+fn bookmarks(app: &App) -> Vec<Bookmark> {
+    app.store.with(|data| data.bookmarks.clone())
+}
+
+fn replace(
+    app: &App,
+    change: impl FnOnce(&mut Vec<Bookmark>),
+) -> Result<Vec<Bookmark>, sabine::BridgeError> {
+    app.store
+        .with_mut(|data| {
+            change(&mut data.bookmarks);
+            data.bookmarks.clone()
+        })
+        .map_err(fail)
 }

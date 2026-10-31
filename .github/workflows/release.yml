@@ -12,10 +12,10 @@ permissions:
 
 jobs:
   release:
-    uses: Lantharos/Sabine/.github/workflows/release-app.yml@023eb98cde8819eadf7c5f1b13a46c8758fecec8
+    uses: Lantharos/Sabine/.github/workflows/release-app.yml@61ce5ded992edf1ceef149a6ce9bbfbcc38eed03
     with:
-      sabine_version: v0.31
-      rust_toolchain: "1.95"
+      sabine_version: v0.61
+      rust_toolchain: "1.99"
       accept_wix_eula: true
       upgrade_from_sabine_version: v0.22
     secrets:

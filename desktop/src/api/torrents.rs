@@ -1,23 +1,16 @@
-use std::io::SeekFrom;
 use std::net::SocketAddr;
 use std::path::Path;
 
-use axum::body::Body;
 use axum::extract::{ConnectInfo, Path as AxumPath, Query, State};
-use axum::http::header::{
-    ACCEPT_RANGES, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE,
-};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio_util::io::ReaderStream;
 
 use super::approval::{ApprovalOutcome, TorrentApprovalInput};
 use super::{ApiState, check_auth, unauthorized};
 use crate::os::vpn;
-use crate::store::schema::TorrentInfo;
+use crate::store::schema::{TorrentInfo, TorrentStatus};
 use crate::torrent::{CompanionTorrentOptions, TorrentError, TorrentFile};
 
 const READY_BYTES: u64 = 5 * 1024 * 1024;
@@ -53,11 +46,6 @@ pub struct RemoveTorrentQuery {
     delete_files: bool,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct StreamQuery {
-    token: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiTorrentFile {
@@ -75,13 +63,12 @@ pub struct ApiTorrentStatus {
     id: String,
     info_hash: Option<String>,
     name: String,
-    status: String,
+    status: TorrentStatus,
     stage: &'static str,
     progress: f64,
     download_speed: f64,
     upload_speed: f64,
     peers: u32,
-    seeds: u32,
     size: u64,
     downloaded: u64,
     files: Vec<ApiTorrentFile>,
@@ -142,7 +129,10 @@ pub async fn add_torrent(
     let client_id = clean_text(body.client_id).unwrap_or_else(|| "unknown".to_string());
     let client_name = clean_text(body.client_name).unwrap_or_else(|| client_id.clone());
     let name = clean_text(body.name);
-    let display_name = name.clone().unwrap_or_else(|| magnet_label(&magnet));
+    let display_name = name
+        .clone()
+        .or_else(|| crate::torrent::magnet_name(&magnet))
+        .unwrap_or_else(|| "Torrent from companion app".to_string());
     let approval = state
         .app
         .approvals
@@ -186,13 +176,13 @@ pub async fn add_torrent(
         .app
         .torrent_engine
         .add_companion_magnet(
-            state.app.clone(),
+            &state.app,
             magnet,
             CompanionTorrentOptions {
                 name,
                 selected_file_index: body.file_index,
-                client_id: Some(client_id),
-                client_name: Some(client_name),
+                client_id,
+                client_name,
             },
         )
         .await;
@@ -217,11 +207,11 @@ pub async fn add_torrent(
         {
             return torrent_error(error_value);
         }
-        if let Err(error_value) =
-            state
-                .app
-                .torrent_engine
-                .prime_file(&torrent.id, selected, READY_BYTES)
+        if let Err(error_value) = state
+            .app
+            .torrent_engine
+            .prime_file(&torrent.id, selected, READY_BYTES)
+            .await
         {
             return torrent_error(error_value);
         }
@@ -230,7 +220,7 @@ pub async fn add_torrent(
                 .torrents
                 .iter_mut()
                 .find(|item| item.id == torrent.id)?;
-            item.selected_file_index = Some(selected as i64);
+            item.selected_file_index = Some(selected as u32);
             Some(item.clone())
         });
         match updated {
@@ -289,71 +279,6 @@ pub async fn remove_torrent(
     }
 }
 
-pub async fn stream_torrent(
-    State(state): State<ApiState>,
-    headers: HeaderMap,
-    AxumPath((id, file_index)): AxumPath<(String, usize)>,
-    Query(query): Query<StreamQuery>,
-) -> Response {
-    if !check_stream_auth(&state, &headers, query.token.as_deref()) {
-        return unauthorized();
-    }
-    let files = match state.app.torrent_engine.list_files(&id) {
-        Ok(files) => files,
-        Err(error_value) => return torrent_error(error_value),
-    };
-    let Some(file) = files.into_iter().find(|file| file.index == file_index) else {
-        return error(StatusCode::NOT_FOUND, "NOT_FOUND", "Torrent file not found");
-    };
-    let (mut stream, stream_length) = match state.app.torrent_engine.stream(&id, file_index) {
-        Ok(stream) => stream,
-        Err(error_value) => return torrent_error(error_value),
-    };
-    let range = match parse_range(headers.get(RANGE), stream_length) {
-        Ok(range) => range,
-        Err(()) => return unsatisfiable(stream_length),
-    };
-    if range.start > 0 && stream.seek(SeekFrom::Start(range.start)).await.is_err() {
-        return error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "STREAM_ERROR",
-            "Could not seek torrent stream",
-        );
-    }
-    let count = range.end - range.start + 1;
-    let status = if range.partial {
-        StatusCode::PARTIAL_CONTENT
-    } else {
-        StatusCode::OK
-    };
-    let reader = stream.take(count);
-    let body = Body::from_stream(ReaderStream::with_capacity(reader, 64 * 1024));
-    let mut response = (status, body).into_response();
-    let response_headers = response.headers_mut();
-    response_headers.insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    response_headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response_headers.insert(
-        CONTENT_LENGTH,
-        HeaderValue::from_str(&count.to_string()).unwrap(),
-    );
-    if let Ok(value) = HeaderValue::from_str(
-        mime_guess::from_path(&file.name)
-            .first_or_octet_stream()
-            .as_ref(),
-    ) {
-        response_headers.insert(CONTENT_TYPE, value);
-    }
-    if range.partial
-        && let Ok(value) = HeaderValue::from_str(&format!(
-            "bytes {}-{}/{}",
-            range.start, range.end, range.length
-        ))
-    {
-        response_headers.insert(CONTENT_RANGE, value);
-    }
-    response
-}
-
 pub fn status_for(
     state: &ApiState,
     torrent: TorrentInfo,
@@ -362,7 +287,7 @@ pub fn status_for(
     let stats = state.app.torrent_engine.stats(&torrent.id)?;
     let selected_file_index = torrent
         .selected_file_index
-        .and_then(|index| usize::try_from(index).ok())
+        .map(|index| index as usize)
         .filter(|index| files.iter().any(|file| file.index == *index));
     let api_files = files
         .iter()
@@ -389,36 +314,29 @@ pub fn status_for(
     let downloaded = selected
         .map(|file| file.downloaded)
         .unwrap_or(torrent.downloaded);
-    let done = torrent.status == "completed" || torrent.status == "seeding";
+    let done = torrent.status.is_done();
     let ready = done
         || selected.is_some_and(|file| {
             file.length > 0
                 && (file.downloaded >= READY_BYTES.min(file.length)
                     || file.progress >= READY_PROGRESS)
         });
-    let stage = if torrent.status == "error" {
+    let stage = if torrent.status == TorrentStatus::Error {
         "error"
     } else if done {
         "done"
-    } else if files.is_empty() || torrent.info_hash.is_none() {
+    } else if files.is_empty() || torrent.info_hash.is_empty() {
         "metadata"
     } else if ready {
         "ready"
     } else {
         "downloading"
     };
-    let stream_url = selected_file_index.map(|index| {
-        let port = state.app.api_port.lock().unwrap_or_default();
-        let token = state.app.api_token.read().clone().unwrap_or_default();
-        format!(
-            "http://127.0.0.1:{port}/v1/torrents/{}/stream/{index}?token={}",
-            torrent.id,
-            url_encode(&token)
-        )
-    });
+    let stream_url =
+        selected_file_index.and_then(|index| state.app.api.stream_url(&torrent.id, index));
     Ok(ApiTorrentStatus {
         id: torrent.id,
-        info_hash: torrent.info_hash,
+        info_hash: Some(torrent.info_hash).filter(|hash| !hash.is_empty()),
         name: torrent.name,
         status: torrent.status,
         stage,
@@ -428,7 +346,6 @@ pub fn status_for(
         download_speed: torrent.download_speed,
         upload_speed: torrent.upload_speed,
         peers: torrent.peers,
-        seeds: torrent.seeds,
         size,
         downloaded,
         files: api_files,
@@ -449,15 +366,6 @@ fn clean_text(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn magnet_label(magnet: &str) -> String {
-    magnet
-        .split('&')
-        .find_map(|part| part.strip_prefix("dn="))
-        .map(url_decode)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Torrent from companion app".to_string())
 }
 
 fn select_file(
@@ -513,7 +421,7 @@ fn vpn_error() -> Response {
     )
 }
 
-fn torrent_error(error_value: TorrentError) -> Response {
+pub(super) fn torrent_error(error_value: TorrentError) -> Response {
     let status = match error_value {
         TorrentError::NotFound(_) => StatusCode::NOT_FOUND,
         TorrentError::NotInitialized => StatusCode::SERVICE_UNAVAILABLE,
@@ -522,135 +430,14 @@ fn torrent_error(error_value: TorrentError) -> Response {
     error(status, "TORRENT_ERROR", &error_value.to_string())
 }
 
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
+pub(super) fn error(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(json!({ "error": code, "message": message }))).into_response()
-}
-
-fn check_stream_auth(state: &ApiState, headers: &HeaderMap, query_token: Option<&str>) -> bool {
-    check_auth(headers, state)
-        || query_token.is_some_and(|candidate| {
-            state
-                .app
-                .api_token
-                .read()
-                .as_deref()
-                .is_some_and(|token| candidate == token)
-        })
-}
-
-struct ByteRange {
-    start: u64,
-    end: u64,
-    length: u64,
-    partial: bool,
-}
-
-fn parse_range(header: Option<&HeaderValue>, length: u64) -> Result<ByteRange, ()> {
-    if length == 0 {
-        return Err(());
-    }
-    let Some(header) = header else {
-        return Ok(ByteRange {
-            start: 0,
-            end: length - 1,
-            length,
-            partial: false,
-        });
-    };
-    let value = header
-        .to_str()
-        .map_err(|_| ())?
-        .strip_prefix("bytes=")
-        .ok_or(())?;
-    if value.contains(',') {
-        return Err(());
-    }
-    let (start, end) = value.split_once('-').ok_or(())?;
-    let (start, end) = if start.is_empty() {
-        let suffix = end.parse::<u64>().map_err(|_| ())?.min(length);
-        if suffix == 0 {
-            return Err(());
-        }
-        (length - suffix, length - 1)
-    } else {
-        let start = start.parse::<u64>().map_err(|_| ())?;
-        if start >= length {
-            return Err(());
-        }
-        let end = if end.is_empty() {
-            length - 1
-        } else {
-            end.parse::<u64>().map_err(|_| ())?.min(length - 1)
-        };
-        if end < start {
-            return Err(());
-        }
-        (start, end)
-    };
-    Ok(ByteRange {
-        start,
-        end,
-        length,
-        partial: true,
-    })
-}
-
-fn unsatisfiable(length: u64) -> Response {
-    let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
-    if let Ok(value) = HeaderValue::from_str(&format!("bytes */{length}")) {
-        response.headers_mut().insert(CONTENT_RANGE, value);
-    }
-    response
-}
-
-fn url_encode(value: &str) -> String {
-    value
-        .bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (byte as char).to_string()
-            }
-            _ => format!("%{byte:02X}"),
-        })
-        .collect()
-}
-
-fn url_decode(value: &str) -> String {
-    let value = value.replace('+', " ");
-    let bytes = value.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%'
-            && index + 2 < bytes.len()
-            && let Ok(byte) = u8::from_str_radix(&value[index + 1..index + 3], 16)
-        {
-            output.push(byte);
-            index += 3;
-            continue;
-        }
-        output.push(bytes[index]);
-        index += 1;
-    }
-    String::from_utf8_lossy(&output).into_owned()
 }
 
 #[cfg(test)]
 mod tests {
-    use axum::http::HeaderValue;
-
-    use super::{parse_range, select_file};
+    use super::select_file;
     use crate::torrent::TorrentFile;
-
-    #[test]
-    fn parses_open_and_suffix_ranges() {
-        let open = HeaderValue::from_static("bytes=100-");
-        let range = parse_range(Some(&open), 1_000).unwrap();
-        assert_eq!((range.start, range.end), (100, 999));
-        let suffix = HeaderValue::from_static("bytes=-200");
-        let range = parse_range(Some(&suffix), 1_000).unwrap();
-        assert_eq!((range.start, range.end), (800, 999));
-    }
 
     #[test]
     fn auto_selects_largest_video() {

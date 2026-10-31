@@ -1,15 +1,14 @@
-use std::collections::VecDeque;
+use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
-use sabine::{BridgeEventEmitter, SabineProcessHandle};
-use serde_json::Value;
+use sabine::{BridgeEvent, BridgeEventEmitter, SabineProcessHandle};
+use serde::Serialize;
 use tokio::runtime::Handle;
-use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::api::ApiControl;
 use crate::api::approval::ApprovalManager;
 use crate::debrid::DebridService;
 use crate::downloads::DownloadManager;
@@ -20,46 +19,40 @@ use crate::torrent::TorrentEngine;
 pub struct AppState {
     pub store: Store,
     pub runtime: Handle,
-    pub events: Mutex<VecDeque<(String, Value)>>,
-    bridge_events_ready: AtomicBool,
     pub download_manager: DownloadManager,
     pub torrent_engine: TorrentEngine,
     pub debrid: DebridService,
-    pub api_token: RwLock<Option<String>>,
-    pub api_port: Mutex<Option<u16>>,
-    pub api_rotation: Mutex<()>,
-    pub api_shutdown: Mutex<Option<oneshot::Sender<()>>>,
-    pub api_task: AsyncMutex<Option<JoinHandle<()>>>,
+    pub api: ApiControl,
     pub approvals: ApprovalManager,
-    bridge_emitter: RwLock<Option<BridgeEventEmitter>>,
+    emitter: RwLock<Option<BridgeEventEmitter>>,
     process_handle: RwLock<Option<SabineProcessHandle>>,
     process_ready: tokio::sync::Notify,
     clipboard_watcher: Mutex<Option<ClipboardWatcher>>,
 }
-
-const EVENT_QUEUE_CAPACITY: usize = 1_024;
 
 impl AppState {
     pub fn new(store: Store, runtime: Handle) -> Result<Self, reqwest::Error> {
         Ok(Self {
             store,
             runtime,
-            events: Mutex::new(VecDeque::new()),
-            bridge_events_ready: AtomicBool::new(false),
             download_manager: DownloadManager::new()?,
             torrent_engine: TorrentEngine::new(),
             debrid: DebridService::new()?,
-            api_token: RwLock::new(None),
-            api_port: Mutex::new(None),
-            api_rotation: Mutex::new(()),
-            api_shutdown: Mutex::new(None),
-            api_task: AsyncMutex::new(None),
+            api: ApiControl::default(),
             approvals: ApprovalManager::default(),
-            bridge_emitter: RwLock::new(None),
+            emitter: RwLock::new(None),
             process_handle: RwLock::new(None),
             process_ready: tokio::sync::Notify::new(),
             clipboard_watcher: Mutex::new(None),
         })
+    }
+
+    pub fn spawn<F>(&self, future: F) -> JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.runtime.spawn(future)
     }
 
     pub fn set_clipboard_monitoring(self: &Arc<Self>, enabled: bool) {
@@ -74,36 +67,14 @@ impl AppState {
         }
     }
 
-    pub fn push_event(&self, name: impl Into<String>, payload: Value) {
-        let name = name.into();
-        if self.bridge_events_ready.load(Ordering::Acquire)
-            && self.emit_bridge_event(name.clone(), payload.clone())
-        {
-            return;
+    pub fn send<T: Serialize>(&self, event: &BridgeEvent<T>, payload: &T) {
+        if let Some(emitter) = self.emitter.read().as_ref() {
+            emitter.send(event, payload);
         }
-        let mut events = self.events.lock();
-        if self.bridge_events_ready.load(Ordering::Acquire)
-            && self.emit_bridge_event(name.clone(), payload.clone())
-        {
-            return;
-        }
-        if events.len() == EVENT_QUEUE_CAPACITY
-            && let Some((dropped_event, _)) = events.pop_front()
-        {
-            tracing::warn!(%dropped_event, capacity = EVENT_QUEUE_CAPACITY, "event queue overflow; evicted oldest event");
-        }
-        events.push_back((name, payload));
-    }
-
-    pub fn activate_event_delivery(&self) -> Vec<(String, Value)> {
-        let mut events = self.events.lock();
-        let pending = events.drain(..).collect();
-        self.bridge_events_ready.store(true, Ordering::Release);
-        pending
     }
 
     pub fn set_bridge_emitter(&self, emitter: BridgeEventEmitter) {
-        *self.bridge_emitter.write() = Some(emitter);
+        *self.emitter.write() = Some(emitter);
     }
 
     pub fn set_process_handle(&self, handle: SabineProcessHandle) {
@@ -124,16 +95,9 @@ impl AppState {
         }
     }
 
-    pub fn emit_bridge_event(&self, name: impl Into<String>, payload: Value) -> bool {
-        self.bridge_emitter
-            .read()
-            .as_ref()
-            .is_some_and(|emitter| emitter.emit(name, payload))
-    }
-
     pub fn quit(&self) -> Result<(), crate::store::StoreError> {
         self.store.save()?;
-        let emitter = self.bridge_emitter.read().clone();
+        let emitter = self.emitter.read().clone();
         self.runtime.spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
             if let Some(emitter) = emitter {

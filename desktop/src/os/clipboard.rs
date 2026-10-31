@@ -2,29 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use crate::events::CLIPBOARD_LINKS;
 use crate::state::AppState;
-
-#[derive(Debug, thiserror::Error)]
-pub enum ClipboardError {
-    #[error("clipboard unavailable: {0}")]
-    Unavailable(String),
-}
-
-pub fn read_text() -> Result<String, ClipboardError> {
-    let mut clipboard =
-        arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
-    clipboard
-        .get_text()
-        .map_err(|e| ClipboardError::Unavailable(e.to_string()))
-}
-
-pub fn write_text(text: &str) -> Result<(), ClipboardError> {
-    let mut clipboard =
-        arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
-    clipboard
-        .set_text(text.to_string())
-        .map_err(|e| ClipboardError::Unavailable(e.to_string()))
-}
 
 pub struct ClipboardWatcher {
     stop: Arc<AtomicBool>,
@@ -56,10 +35,7 @@ impl ClipboardWatcher {
                         let Some(app) = app.upgrade() else {
                             break;
                         };
-                        app.push_event(
-                            "clipboard-download-detected",
-                            serde_json::to_value(&urls).unwrap_or_default(),
-                        );
+                        app.send(&CLIPBOARD_LINKS, &urls);
                     }
                 }
                 std::thread::sleep(interval);
@@ -68,15 +44,11 @@ impl ClipboardWatcher {
 
         Self { stop }
     }
-
-    pub fn stop(&self) {
-        self.stop.store(true, Ordering::SeqCst);
-    }
 }
 
 impl Drop for ClipboardWatcher {
     fn drop(&mut self) {
-        self.stop();
+        self.stop.store(true, Ordering::SeqCst);
     }
 }
 

@@ -7,9 +7,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use serde::Serialize;
+use specta::Type;
 
 use crate::state::AppState;
-use crate::store::schema::DebridSettings;
+use crate::store::schema::{DebridProvider, DebridSettings};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DebridError {
@@ -23,14 +24,13 @@ pub enum DebridError {
     Message(String),
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct DebridResult {
     pub url: Option<String>,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RdDeviceStart {
     pub user_code: String,
@@ -39,22 +39,14 @@ pub struct RdDeviceStart {
     pub expires_in: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "status")]
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(tag = "status", rename_all = "lowercase")]
 pub enum RdDevicePoll {
-    #[serde(rename = "idle")]
     Idle,
-    #[serde(rename = "pending")]
     Pending,
-    #[serde(rename = "expired")]
     Expired { error: String },
-    #[serde(rename = "error")]
     Error { error: String },
-    #[serde(rename = "success")]
-    Success {
-        #[serde(rename = "accessToken")]
-        access_token: String,
-    },
+    Linked,
 }
 
 #[derive(Debug, Clone)]
@@ -87,10 +79,11 @@ impl DebridService {
 
     pub fn is_torrent_supported(&self, app: &AppState) -> bool {
         app.store.with(|d| {
-            matches!(
-                d.settings.debrid.service.as_deref(),
-                Some("realdebrid") | Some("alldebrid") | Some("torbox")
-            ) && !d.settings.debrid.api_key.is_empty()
+            d.settings
+                .debrid
+                .service
+                .is_some_and(DebridProvider::supports_torrents)
+                && !d.settings.debrid.api_key.is_empty()
         })
     }
 
@@ -119,12 +112,15 @@ impl DebridService {
         url: &str,
     ) -> Result<DebridResult, DebridError> {
         let cfg = self.resolved_config(app).await?;
-        match cfg.service.as_deref() {
-            Some("realdebrid") => self.rd_unrestrict(app, &cfg, url).await,
-            Some("alldebrid") => alldebrid::unrestrict(&self.client, &cfg.api_key, url).await,
-            Some("premiumize") => premiumize::unrestrict(&self.client, &cfg.api_key, url).await,
-            Some("torbox") => torbox::unrestrict(&self.client, &cfg.api_key, url).await,
-            _ => Err(DebridError::NotConfigured),
+        match provider(&cfg)? {
+            DebridProvider::RealDebrid => self.rd_unrestrict(app, &cfg, url).await,
+            DebridProvider::AllDebrid => {
+                alldebrid::unrestrict(&self.client, &cfg.api_key, url).await
+            }
+            DebridProvider::Premiumize => {
+                premiumize::unrestrict(&self.client, &cfg.api_key, url).await
+            }
+            DebridProvider::TorBox => torbox::unrestrict(&self.client, &cfg.api_key, url).await,
         }
     }
 
@@ -134,16 +130,17 @@ impl DebridService {
         magnet_uri: &str,
     ) -> Result<Vec<String>, DebridError> {
         let cfg = self.resolved_config(app).await?;
-        match cfg.service.as_deref() {
-            Some("realdebrid") => self.rd_convert_magnet(app, cfg, magnet_uri).await,
-            Some("alldebrid") => {
+        match provider(&cfg)? {
+            DebridProvider::RealDebrid => self.rd_convert_magnet(app, cfg, magnet_uri).await,
+            DebridProvider::AllDebrid => {
                 alldebrid::convert_magnet(&self.client, &cfg.api_key, magnet_uri).await
             }
-            Some("premiumize") => {
+            DebridProvider::Premiumize => {
                 premiumize::convert_magnet(&self.client, &cfg.api_key, magnet_uri).await
             }
-            Some("torbox") => torbox::convert_magnet(&self.client, &cfg.api_key, magnet_uri).await,
-            _ => Err(DebridError::NotConfigured),
+            DebridProvider::TorBox => {
+                torbox::convert_magnet(&self.client, &cfg.api_key, magnet_uri).await
+            }
         }
     }
 
@@ -153,10 +150,8 @@ impl DebridService {
         torrent_url: &str,
     ) -> Result<Vec<String>, DebridError> {
         let cfg = self.resolved_config(app).await?;
-        if !matches!(
-            cfg.service.as_deref(),
-            Some("realdebrid") | Some("alldebrid") | Some("torbox")
-        ) {
+        let provider = provider(&cfg)?;
+        if !provider.supports_torrents() {
             return Err(DebridError::Message(
                 "Debrid service does not support torrent files".to_string(),
             ));
@@ -177,26 +172,25 @@ impl DebridService {
             ));
         }
 
-        match cfg.service.as_deref() {
-            Some("realdebrid") => self.rd_convert_torrent_file(app, cfg, bytes).await,
-            Some("alldebrid") => {
+        match provider {
+            DebridProvider::RealDebrid => self.rd_convert_torrent_file(app, cfg, bytes).await,
+            DebridProvider::AllDebrid => {
                 alldebrid::convert_torrent_file(&self.client, &cfg.api_key, &filename, bytes).await
             }
-            Some("torbox") => {
+            DebridProvider::TorBox => {
                 torbox::convert_torrent_file(&self.client, &cfg.api_key, &filename, bytes).await
             }
-            _ => Err(DebridError::NotConfigured),
+            DebridProvider::Premiumize => Err(DebridError::NotConfigured),
         }
     }
 
     pub async fn get_supported_hosts(&self, app: &AppState) -> Result<Vec<String>, DebridError> {
         let cfg = self.resolved_config(app).await?;
-        match cfg.service.as_deref() {
-            Some("realdebrid") => Ok(realdebrid::hosts(&self.client, &cfg.api_key).await?),
-            Some("alldebrid") => alldebrid::hosts(&self.client, &cfg.api_key).await,
-            Some("premiumize") => premiumize::hosts(&self.client, &cfg.api_key).await,
-            Some("torbox") => torbox::hosts(&self.client, &cfg.api_key).await,
-            _ => Err(DebridError::NotConfigured),
+        match provider(&cfg)? {
+            DebridProvider::RealDebrid => Ok(realdebrid::hosts(&self.client, &cfg.api_key).await?),
+            DebridProvider::AllDebrid => alldebrid::hosts(&self.client, &cfg.api_key).await,
+            DebridProvider::Premiumize => premiumize::hosts(&self.client, &cfg.api_key).await,
+            DebridProvider::TorBox => torbox::hosts(&self.client, &cfg.api_key).await,
         }
     }
 
@@ -259,7 +253,7 @@ impl DebridService {
             &state.device_code,
         )
         .await?;
-        let Some(access_token) = token.access_token.clone() else {
+        let Some(access_token) = token.access_token else {
             return Ok(RdDevicePoll::Error {
                 error: "Real-Debrid: No access_token returned".to_string(),
             });
@@ -268,8 +262,8 @@ impl DebridService {
         let expires_at = now_ms() + token.expires_in.unwrap_or(0) * 1000;
         app.store.with_mut(|d| {
             d.settings.debrid = DebridSettings {
-                service: Some("realdebrid".to_string()),
-                api_key: access_token.clone(),
+                service: Some(DebridProvider::RealDebrid),
+                api_key: access_token,
                 refresh_token: token.refresh_token.clone(),
                 expires_at: Some(expires_at),
                 client_id: Some(client_id),
@@ -278,15 +272,12 @@ impl DebridService {
         })?;
 
         *self.rd_device.lock() = None;
-        Ok(RdDevicePoll::Success { access_token })
+        Ok(RdDevicePoll::Linked)
     }
 
     async fn resolved_config(&self, app: &AppState) -> Result<DebridSettings, DebridError> {
         let cfg = app.store.with(|d| d.settings.debrid.clone());
-        if cfg.service.is_none() {
-            return Err(DebridError::NotConfigured);
-        }
-        if cfg.service.as_deref() != Some("realdebrid") {
+        if provider(&cfg)? != DebridProvider::RealDebrid {
             return Ok(cfg);
         }
         let Some(expires_at) = cfg.expires_at else {
@@ -444,6 +435,10 @@ impl DebridService {
         }
         Ok(resolved)
     }
+}
+
+fn provider(cfg: &DebridSettings) -> Result<DebridProvider, DebridError> {
+    cfg.service.ok_or(DebridError::NotConfigured)
 }
 
 fn now_ms() -> i64 {

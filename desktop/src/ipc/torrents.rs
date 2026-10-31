@@ -1,164 +1,143 @@
+use std::time::Duration;
+
 use sabine::{BridgeError, SabineWindow};
-use serde_json::{Value, json};
+use serde::Deserialize;
+use specta::Type;
 
-use crate::os;
+use crate::os::vpn;
+use crate::store::schema::TorrentInfo;
 
-use super::{App, err, ok, param_bool, param_str, register};
+use super::{App, ById, Empty, command, fail, task};
 
-pub fn attach(mut window: SabineWindow, app: App) -> SabineWindow {
-    window = register(window, "limbo.getTorrents", app.clone(), |app, _| {
-        ok(app.torrent_engine.list(&app))
+const MAX_TORRENT_FILE_BYTES: usize = 10 * 1024 * 1024;
+
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+struct AddMagnet {
+    magnet_uri: String,
+}
+
+#[derive(Deserialize, Type)]
+struct AddFile {
+    path: String,
+}
+
+#[derive(Deserialize, Type)]
+struct AddRemote {
+    url: String,
+}
+
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+struct RemoveTorrent {
+    id: String,
+    delete_files: bool,
+}
+
+pub fn attach(window: SabineWindow, app: &App) -> SabineWindow {
+    let window = command(window, "torrents.list", app, |app, Empty {}| {
+        Ok(app.torrent_engine.list(app))
     });
-    window = register(window, "limbo.addTorrent", app.clone(), |app, cmd| {
-        let Some(magnet) = param_str(&cmd.params, "magnetUri") else {
-            return err("magnetUri required");
-        };
-        if app.store.with(|d| d.settings.require_vpn) && !os::vpn::is_vpn_connected() {
-            return err("VPN_REQUIRED");
-        }
-        app.runtime
-            .block_on(app.torrent_engine.add_magnet(app.clone(), magnet, None))
-            .map_err(|e| BridgeError::new(e.to_string()))
-            .and_then(ok)
-    });
-    window = register(window, "limbo.addTorrentFile", app.clone(), |app, cmd| {
-        let Some(path) = param_str(&cmd.params, "filePath") else {
-            return err("filePath required");
-        };
-        if app.store.with(|d| d.settings.require_vpn) && !os::vpn::is_vpn_connected() {
-            return err("VPN_REQUIRED");
-        }
-        let bytes = std::fs::read(&path).map_err(|e| BridgeError::new(e.to_string()))?;
-        app.runtime
-            .block_on(app.torrent_engine.add_file_bytes(app.clone(), bytes, None))
-            .map_err(|e| BridgeError::new(e.to_string()))
-            .and_then(ok)
-    });
-    window = register(window, "limbo.addRemoteTorrent", app.clone(), |app, cmd| {
-        let Some(url) = param_str(&cmd.params, "url") else {
-            return err("url required");
-        };
-        if app.store.with(|d| d.settings.require_vpn) && !os::vpn::is_vpn_connected() {
-            return err("VPN_REQUIRED");
-        }
-        let bytes = app
-            .runtime
-            .block_on(crate::net::fetch_public_bounded(
-                &url,
-                10 * 1024 * 1024,
-                std::time::Duration::from_secs(60),
-            ))
-            .map_err(|error| BridgeError::new(error.to_string()))?
+    let window = task(
+        window,
+        "torrents.add",
+        app,
+        |app, request: AddMagnet| async move {
+            require_vpn(&app)?;
+            app.torrent_engine
+                .add_magnet(&app, request.magnet_uri)
+                .await
+                .map_err(fail)
+        },
+    );
+    let window = task(
+        window,
+        "torrents.addFile",
+        app,
+        |app, request: AddFile| async move {
+            require_vpn(&app)?;
+            let bytes = tokio::fs::read(&request.path).await.map_err(fail)?;
+            app.torrent_engine
+                .add_file_bytes(&app, bytes)
+                .await
+                .map_err(fail)
+        },
+    );
+    let window = task(
+        window,
+        "torrents.addRemote",
+        app,
+        |app, request: AddRemote| async move {
+            require_vpn(&app)?;
+            let bytes = crate::net::fetch_public_bounded(
+                &request.url,
+                MAX_TORRENT_FILE_BYTES,
+                Duration::from_secs(60),
+            )
+            .await
+            .map_err(fail)?
             .bytes;
-        app.runtime
-            .block_on(app.torrent_engine.add_file_bytes(app.clone(), bytes, None))
-            .map_err(|e| BridgeError::new(e.to_string()))
-            .and_then(ok)
-    });
-    window = register(window, "limbo.pauseTorrent", app.clone(), |app, cmd| {
-        let Some(id) = param_str(&cmd.params, "id") else {
-            return err("id required");
-        };
-        app.runtime
-            .block_on(app.torrent_engine.pause(&app, &id))
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(json!({ "success": true }))
-    });
-    window = register(window, "limbo.resumeTorrent", app.clone(), |app, cmd| {
-        let Some(id) = param_str(&cmd.params, "id") else {
-            return err("id required");
-        };
-        app.runtime
-            .block_on(app.torrent_engine.resume(&app, &id))
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(json!({ "success": true }))
-    });
-    window = register(window, "limbo.removeTorrent", app.clone(), |app, cmd| {
-        let Some(id) = param_str(&cmd.params, "id") else {
-            return err("id required");
-        };
-        let delete_files = param_bool(&cmd.params, "deleteFiles").unwrap_or(false);
-        app.runtime
-            .block_on(app.torrent_engine.remove(&app, &id, delete_files))
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(app.torrent_engine.list(&app))
-    });
-    window = register(
-        window,
-        "limbo.isTorrentSupported",
-        app.clone(),
-        |_app, _| ok(true),
+            app.torrent_engine
+                .add_file_bytes(&app, bytes)
+                .await
+                .map_err(fail)
+        },
     );
-    window = register(
+    let window = task(
         window,
-        "limbo.getStreamServerPort",
-        app.clone(),
-        |app, _| ok(app.torrent_engine.stream_port()),
+        "torrents.pause",
+        app,
+        |app, ById { id }| async move { app.torrent_engine.pause(&app, &id).await.map_err(fail) },
     );
-    window = register(window, "limbo.getTorrentFiles", app.clone(), |app, cmd| {
-        let Some(info_hash) = param_str(&cmd.params, "infoHash") else {
-            return err("infoHash required");
-        };
-        let torrent_id = app.store.with(|d| {
-            d.torrents
-                .iter()
-                .find(|t| t.info_hash.as_deref() == Some(info_hash.as_str()) || t.id == info_hash)
-                .map(|t| t.id.clone())
-        });
-        let Some(torrent_id) = torrent_id else {
-            return ok(Vec::<Value>::new());
-        };
-        let port = app.torrent_engine.stream_port();
-        let info_hash = app.store.with(|data| {
-            data.torrents
-                .iter()
-                .find(|torrent| torrent.id == torrent_id)
-                .and_then(|torrent| torrent.info_hash.clone())
-                .unwrap_or_else(|| torrent_id.clone())
-        });
-        let files = app
-            .torrent_engine
-            .list_files(&torrent_id)
-            .map_err(|e| BridgeError::new(e.to_string()))?;
-        ok(files
-            .into_iter()
-            .map(|file| {
-                json!({
-                    "index": file.index,
-                    "name": file.name,
-                    "path": file.name,
-                    "length": file.length,
-                    "downloaded": 0,
-                    "progress": 0.0,
-                    "streamUrl": if port > 0 {
-                        format!("http://127.0.0.1:{port}/torrents/{info_hash}/stream/{}", file.index)
-                    } else {
-                        String::new()
-                    },
-                })
-            })
-            .collect::<Vec<_>>())
-    });
-    window = register(window, "limbo.pauseAllTorrents", app.clone(), |app, _| {
-        let ids = app
-            .store
-            .with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
-        for id in ids {
-            let _ = app.runtime.block_on(app.torrent_engine.pause(&app, &id));
-        }
-        ok(json!({ "success": true }))
-    });
-    window = register(window, "limbo.resumeAllTorrents", app.clone(), |app, _| {
-        let ids = app
-            .store
-            .with(|d| d.torrents.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
-        for id in ids {
-            let _ = app.runtime.block_on(app.torrent_engine.resume(&app, &id));
-        }
-        ok(json!({ "success": true }))
-    });
-    window = register(window, "limbo.checkVpnStatus", app.clone(), |_app, _| {
-        ok(os::vpn::is_vpn_connected())
-    });
-    window
+    let window = task(
+        window,
+        "torrents.resume",
+        app,
+        |app, ById { id }| async move { app.torrent_engine.resume(&app, &id).await.map_err(fail) },
+    );
+    let window = task(
+        window,
+        "torrents.remove",
+        app,
+        |app, request: RemoveTorrent| async move {
+            app.torrent_engine
+                .remove(&app, &request.id, request.delete_files)
+                .await
+                .map_err(fail)?;
+            Ok::<Vec<TorrentInfo>, BridgeError>(app.torrent_engine.list(&app))
+        },
+    );
+    let window = task(
+        window,
+        "torrents.pauseAll",
+        app,
+        |app, Empty {}| async move {
+            for torrent in app.torrent_engine.list(&app) {
+                if let Err(error) = app.torrent_engine.pause(&app, &torrent.id).await {
+                    tracing::warn!(torrent_id = %torrent.id, %error, "failed to pause torrent");
+                }
+            }
+            Ok(())
+        },
+    );
+    task(
+        window,
+        "torrents.resumeAll",
+        app,
+        |app, Empty {}| async move {
+            for torrent in app.torrent_engine.list(&app) {
+                if let Err(error) = app.torrent_engine.resume(&app, &torrent.id).await {
+                    tracing::warn!(torrent_id = %torrent.id, %error, "failed to resume torrent");
+                }
+            }
+            Ok(())
+        },
+    )
+}
+
+fn require_vpn(app: &App) -> Result<(), BridgeError> {
+    if app.store.with(|data| data.settings.require_vpn) && !vpn::is_vpn_connected() {
+        return Err(fail("VPN_REQUIRED"));
+    }
+    Ok(())
 }

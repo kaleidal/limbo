@@ -12,8 +12,9 @@ import {
   AlertCircle,
   Popcorn,
 } from "lucide-react";
+import { events as sabineEvents, guest as guestApi } from "@lantharos/sabine";
 import { Input } from "@/components/ui/input";
-import type { Bookmark } from "@/types/desktop.d";
+import { commands, type Bookmark } from "@/lib/bindings";
 
 export function BrowserView() {
   const { activeBookmark, clearExpiredBrowserSessions } = useAppStore(
@@ -197,10 +198,8 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       return previewRequestRef.current.promise;
     }
     const promise = (async () => {
-      const result = (await window.sabine?.guest?.capturePreview(id)) as
-        | { dataUrl?: string }
-        | undefined;
-      if (!result?.dataUrl || guestIdRef.current !== id || !guestReadyRef.current) {
+      const result = await guestApi.capturePreview(id);
+      if (!result.dataUrl || guestIdRef.current !== id || !guestReadyRef.current) {
         return null;
       }
       setCoverBackdrop(result.dataUrl);
@@ -226,14 +225,13 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     void (async () => {
       if (guestOcclusionDepth <= 0) {
         await Promise.race([
-          window.sabine?.guest?.setCovered?.(false).catch(() => undefined),
+          guestApi.setCovered(false).catch(() => undefined),
           new Promise<void>((resolve) => window.setTimeout(resolve, 1_000)),
         ]);
         setCoverBackdrop(null);
         return;
       }
       const id = guestIdRef.current;
-      const guestApi = window.sabine?.guest;
       if (id) {
         await Promise.race([
           captureGuestPreview(id),
@@ -242,7 +240,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       }
       if (!cancelled) {
         await Promise.race([
-          guestApi?.setCovered?.(true).catch(() => undefined),
+          guestApi.setCovered(true).catch(() => undefined),
           new Promise<void>((resolve) => window.setTimeout(resolve, 1_000)),
         ]);
         if (!cancelled) completeGuestOcclusion();
@@ -254,12 +252,8 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   }, [captureGuestPreview, completeGuestOcclusion, guestOcclusionDepth, guestOcclusionEpoch]);
 
   useLayoutEffect(() => {
-    const guestApi = window.sabine?.guest;
     const host = hostRef.current;
-    if (!guestApi || !host) {
-      setError("Guest browser unavailable");
-      return;
-    }
+    if (!host) return;
 
     const epoch = ++guestEpochRef.current;
     const guestId = `limbo-browser-${bookmark.id}-${epoch}`;
@@ -290,16 +284,10 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
     resizeObserver.observe(host);
     window.addEventListener("resize", syncBounds);
 
-    const unlistenNavigated = window.sabine?.bridge.listen("guest.navigated", (payload) => {
-      const data = payload as {
-        id?: string;
-        url?: string;
-        canGoBack?: boolean;
-        canGoForward?: boolean;
-      };
+    const unlistenNavigated = sabineEvents.guestNavigated((data) => {
       if (!isCurrent() || data.id !== guestId) return;
-      if (data.url?.startsWith("magnet:")) {
-        navigator.clipboard.writeText(data.url).catch(() => undefined);
+      if (data.url.startsWith("magnet:")) {
+        useAppStore.getState().showIncomingLinks([data.url]);
         return;
       }
       if (data.url) {
@@ -313,10 +301,9 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       setError(null);
     });
 
-    const unlistenLoading = window.sabine?.bridge.listen("guest.loading", (payload) => {
-      const data = payload as { id?: string; loading?: boolean };
+    const unlistenLoading = sabineEvents.guestLoading((data) => {
       if (!isCurrent() || data.id !== guestId) return;
-      setIsLoading(Boolean(data.loading));
+      setIsLoading(data.loading);
     });
 
     void (async () => {
@@ -347,12 +334,12 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
         if (useAppStore.getState().guestOcclusionDepth > 0) {
           await captureGuestPreview(guestId);
           await Promise.race([
-            guestApi.setCovered?.(true).catch(() => undefined),
+            guestApi.setCovered(true).catch(() => undefined),
             new Promise<void>((resolve) => window.setTimeout(resolve, 1_000)),
           ]);
           if (guestEpochRef.current === epoch) completeGuestOcclusion();
         } else {
-          await guestApi.setCovered?.(false).catch(() => undefined);
+          await guestApi.setCovered(false).catch(() => undefined);
         }
         setError(null);
       } catch (createError) {
@@ -374,8 +361,8 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       }
       resizeObserver.disconnect();
       window.removeEventListener("resize", syncBounds);
-      unlistenNavigated?.();
-      unlistenLoading?.();
+      unlistenNavigated();
+      unlistenLoading();
       void guestApi.destroy(guestId).catch(() => undefined);
     };
   }, [
@@ -393,12 +380,12 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
   const handleUrlSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     const id = guestId();
-    if (!id || !window.sabine?.guest) return;
+    if (!id) return;
     let nextUrl = currentUrl.trim();
     if (!nextUrl.startsWith("http://") && !nextUrl.startsWith("https://")) {
       nextUrl = `https://${nextUrl}`;
     }
-    void window.sabine.guest.navigate(id, nextUrl).catch(() => undefined);
+    void guestApi.navigate(id, nextUrl).catch(() => undefined);
     setCurrentUrl(nextUrl);
     setIsSecure(nextUrl.startsWith("https://"));
     rememberBrowserSession(bookmark.id, nextUrl);
@@ -417,20 +404,20 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       error={error}
       onGoBack={() => {
         const id = guestId();
-        if (id) void window.sabine?.guest?.goBack(id).catch(() => undefined);
+        if (id) void guestApi.goBack(id).catch(() => undefined);
       }}
       onGoForward={() => {
         const id = guestId();
-        if (id) void window.sabine?.guest?.goForward(id).catch(() => undefined);
+        if (id) void guestApi.goForward(id).catch(() => undefined);
       }}
       onReload={() => {
         const id = guestId();
-        if (id) void window.sabine?.guest?.reload(id).catch(() => undefined);
+        if (id) void guestApi.reload(id).catch(() => undefined);
       }}
       onHome={() => {
         const id = guestId();
-        if (!id || !window.sabine?.guest) return;
-        void window.sabine.guest.navigate(id, bookmark.url).catch(() => undefined);
+        if (!id) return;
+        void guestApi.navigate(id, bookmark.url).catch(() => undefined);
         setCurrentUrl(bookmark.url);
         setIsSecure(bookmark.url.startsWith("https://"));
         rememberBrowserSession(bookmark.id, bookmark.url);
@@ -438,14 +425,7 @@ function GuestBookmarkBrowser({ bookmark }: { bookmark: Bookmark }) {
       }}
       onUrlSubmit={handleUrlSubmit}
       onOpenExternal={() => {
-        if (!window.limbo) return;
-        try {
-          const url = new URL(currentUrl);
-          if (url.protocol !== "http:" && url.protocol !== "https:") return;
-          window.limbo.openExternal(url.href).catch(() => undefined);
-        } catch {
-          return;
-        }
+        void commands.appOpenExternal({ url: currentUrl }).catch(() => undefined);
       }}
     >
       <div ref={hostRef} className="relative min-h-0 w-full flex-1 bg-transparent">

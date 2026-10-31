@@ -1,13 +1,19 @@
-import { useEffect, useState } from "react";
-import { useShallow } from "zustand/react/shallow";
+import { useCallback, useEffect, useState } from "react";
+import { CloudDownload, FileArchive, HardDriveDownload } from "lucide-react";
+import { commands } from "@/lib/bindings";
+import { isVpnRequired } from "@/lib/transfers";
 import { useAppStore } from "@/store/app-store";
 import { useOccludeGuest } from "@/hooks/use-occlude-guest";
+import {
+  useDesktopIntegration,
+  type BrowserDownloadRequest,
+} from "@/hooks/use-desktop-integration";
 import { Sidebar } from "@/components/sidebar";
 import { TitleBar } from "@/components/title-bar";
 import { LibraryView } from "@/components/views/library-view";
-import { DownloadsView } from "@/components/views/downloads-view";
+import { DownloadsView } from "@/components/views/downloads";
 import { BrowserView } from "@/components/views/browser-view";
-import { SettingsView } from "@/components/views/settings-view";
+import { SettingsView } from "@/components/views/settings";
 import { AddBookmarkDialog } from "@/components/dialogs/add-bookmark-dialog";
 import { ClipboardMonitor } from "@/components/clipboard-monitor";
 import {
@@ -20,221 +26,79 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { CloudDownload, FileArchive, HardDriveDownload } from "lucide-react";
-import type { BrowserDownloadRequest, Download } from "@/types/desktop.d";
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+function isTorrentRequest(request: BrowserDownloadRequest) {
+  return (
+    request.filename.toLowerCase().endsWith(".torrent") ||
+    request.url.toLowerCase().includes(".torrent")
+  );
 }
 
-function isVpnRequiredError(error: unknown) {
-  return getErrorMessage(error).includes("VPN_REQUIRED");
-}
-
-function isDownloadStatus(status: string): status is Download["status"] {
-  return [
-    "pending",
-    "downloading",
-    "paused",
-    "completed",
-    "error",
-    "extracting",
-    "cancelled",
-  ].includes(status);
+function CurrentView() {
+  switch (useAppStore((state) => state.currentView)) {
+    case "downloads":
+      return <DownloadsView />;
+    case "browser":
+      return <BrowserView />;
+    case "settings":
+      return <SettingsView />;
+    default:
+      return <LibraryView />;
+  }
 }
 
 export function App() {
-  const {
-    currentView,
-    initializeData,
-    setLibrary,
-    addDownload,
-    updateDownload,
-    addTorrent,
-    updateTorrent,
-    removeTorrent,
-    setCurrentView,
-    setActiveBookmark,
-    settings,
-  } = useAppStore(
-    useShallow((state) => ({
-      currentView: state.currentView,
-      initializeData: state.initializeData,
-      setLibrary: state.setLibrary,
-      addDownload: state.addDownload,
-      updateDownload: state.updateDownload,
-      addTorrent: state.addTorrent,
-      updateTorrent: state.updateTorrent,
-      removeTorrent: state.removeTorrent,
-      setCurrentView: state.setCurrentView,
-      setActiveBookmark: state.setActiveBookmark,
-      settings: state.settings,
-    })),
+  const currentView = useAppStore((state) => state.currentView);
+  const debridConfigured = useAppStore(
+    (state) => !!state.settings?.debrid.service && !!state.settings.debrid.apiKey,
   );
-  const [pendingBrowserDownload, setPendingBrowserDownload] = useState<BrowserDownloadRequest | null>(null);
-  const [browserDownloadDebridSupported, setBrowserDownloadDebridSupported] = useState(false);
-  const guestOcclusionReady = useOccludeGuest(!!pendingBrowserDownload);
+  const [pendingDownload, setPendingDownload] = useState<BrowserDownloadRequest | null>(null);
+  const [debridSupported, setDebridSupported] = useState(false);
+  const guestOcclusionReady = useOccludeGuest(!!pendingDownload);
+  useDesktopIntegration(useCallback((request) => setPendingDownload(request), []));
 
-  const isTorrentFileRequest =
-    !!pendingBrowserDownload &&
-    (pendingBrowserDownload.filename.toLowerCase().endsWith(".torrent") ||
-      pendingBrowserDownload.url.toLowerCase().includes(".torrent"));
-
-  const handleBrowserDownloadChoice = async (useDebrid: boolean) => {
-    if (!pendingBrowserDownload || !window.limbo) return;
-    try {
-      if (isTorrentFileRequest && useDebrid) {
-        const links = await window.limbo.convertTorrentFileDebrid(pendingBrowserDownload.url);
-        for (const link of links) {
-          await window.limbo.startDownload(link);
-        }
-      } else if (isTorrentFileRequest) {
-        await window.limbo.addRemoteTorrent(pendingBrowserDownload.url);
-      } else {
-        await window.limbo.startDownload(pendingBrowserDownload.url, {
-          filename: pendingBrowserDownload.filename,
-          useDebrid,
-        });
-      }
-      setActiveBookmark(null);
-      setCurrentView("downloads");
-      if (isTorrentFileRequest && !useDebrid) {
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent("switch-to-torrents"));
-        }, 100);
-      }
-    } catch (error) {
-      console.error("Failed to start browser-triggered download:", error);
-    } finally {
-      setPendingBrowserDownload(null);
-      setBrowserDownloadDebridSupported(false);
-    }
-  };
+  const isTorrent = !!pendingDownload && isTorrentRequest(pendingDownload);
+  const offerDebrid = debridConfigured && debridSupported;
 
   useEffect(() => {
-    if (!pendingBrowserDownload || !window.limbo) {
-      setBrowserDownloadDebridSupported(false);
-      return;
-    }
-
+    setDebridSupported(false);
+    if (!pendingDownload) return;
     let cancelled = false;
-    const checkSupport = async () => {
-      const supported = isTorrentFileRequest
-        ? await window.limbo.isDebridTorrentSupported().catch(() => false)
-        : await window.limbo.isDebridUrlSupported(pendingBrowserDownload.url).catch(() => false);
-      if (!cancelled) {
-        setBrowserDownloadDebridSupported(supported);
-      }
-    };
-
-    checkSupport();
+    const check = isTorrentRequest(pendingDownload)
+      ? commands.debridTorrentSupported()
+      : commands.debridUrlSupported({ url: pendingDownload.url });
+    void check
+      .catch(() => false)
+      .then((supported) => {
+        if (!cancelled) setDebridSupported(supported);
+      });
     return () => {
       cancelled = true;
     };
-  }, [isTorrentFileRequest, pendingBrowserDownload]);
+  }, [pendingDownload]);
 
-  useEffect(() => {
-    // Load initial data
-    initializeData();
-
-    // Set up event listeners
-    if (window.limbo) {
-      const unsubStarted = window.limbo.onDownloadStarted((download) => {
-        addDownload(download);
-      });
-
-      const unsubProgress = window.limbo.onDownloadProgress((progress) => {
-        updateDownload(progress.id, {
-          downloaded: progress.downloaded,
-          size: progress.total,
-          status: isDownloadStatus(progress.status) ? progress.status : "error",
-          speed: progress.speed,
+  const startPendingDownload = async (useDebrid: boolean) => {
+    if (!pendingDownload) return;
+    const { showDownloads, setVpnRequired } = useAppStore.getState();
+    setPendingDownload(null);
+    try {
+      if (isTorrent && useDebrid) {
+        showDownloads("downloads");
+        await commands.debridDownloadTorrentFile({ url: pendingDownload.url });
+      } else if (isTorrent) {
+        showDownloads("torrents");
+        await commands.torrentsAddRemote({ url: pendingDownload.url });
+      } else {
+        showDownloads("downloads");
+        await commands.downloadsStart({
+          url: pendingDownload.url,
+          filename: pendingDownload.filename,
+          useDebrid,
         });
-      });
-
-      const unsubComplete = window.limbo.onDownloadComplete((data) => {
-        if (isDownloadStatus(data.status)) {
-          updateDownload(data.id, { status: data.status });
-        }
-      });
-
-      const unsubLibrary = window.limbo.onLibraryUpdated((library) => {
-        setLibrary(library);
-      });
-
-      const unsubTorrentAdded = window.limbo.onTorrentAdded((torrent) => {
-        addTorrent(torrent);
-      });
-
-      const unsubTorrentProgress = window.limbo.onTorrentProgress((torrent) => {
-        updateTorrent(torrent.id, torrent);
-      });
-
-      const unsubTorrentComplete = window.limbo.onTorrentComplete((torrent) => {
-        updateTorrent(torrent.id, torrent);
-      });
-
-      const unsubTorrentError = window.limbo.onTorrentError((data) => {
-        updateTorrent(data.id, { status: "error" });
-      });
-
-      const unsubTorrentRemoved = window.limbo.onTorrentRemoved((data) => {
-        removeTorrent(data.id);
-      });
-
-      const unsubTorrentFile = window.limbo.onTorrentFileOpened(async (filePath: string) => {
-        try {
-          setCurrentView("downloads");
-          setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('switch-to-torrents'));
-          }, 100);
-          // `addTorrentFile` will cause the main process to emit `torrent-added`.
-          // We listen for that event above and add it to state there.
-          await window.limbo.addTorrentFile(filePath);
-        } catch (error: unknown) {
-          console.error("Failed to add torrent file:", error);
-          if (isVpnRequiredError(error)) {
-            setCurrentView("downloads");
-            setTimeout(() => {
-              window.dispatchEvent(new CustomEvent("switch-to-torrents"));
-              window.dispatchEvent(new CustomEvent("vpn-required"));
-            }, 100);
-          }
-        }
-      });
-
-      const unsubBrowserDownload = window.limbo.onBrowserDownloadRequested((request) => {
-        setPendingBrowserDownload(request);
-      });
-
-      return () => {
-        unsubStarted();
-        unsubProgress();
-        unsubComplete();
-        unsubLibrary();
-        unsubTorrentAdded();
-        unsubTorrentProgress();
-        unsubTorrentComplete();
-        unsubTorrentError();
-        unsubTorrentRemoved();
-        unsubTorrentFile();
-        unsubBrowserDownload();
-      };
-    }
-  }, [addDownload, addTorrent, initializeData, removeTorrent, setActiveBookmark, setCurrentView, setLibrary, updateDownload, updateTorrent]);
-
-  const renderView = () => {
-    switch (currentView) {
-      case "library":
-        return <LibraryView />;
-      case "downloads":
-        return <DownloadsView />;
-      case "browser":
-        return <BrowserView />;
-      case "settings":
-        return <SettingsView />;
-      default:
-        return <LibraryView />;
+      }
+    } catch (error) {
+      if (isVpnRequired(error)) setVpnRequired(true);
+      else console.error("Failed to start browser download:", error);
     }
   };
 
@@ -251,45 +115,40 @@ export function App() {
                 : "flex-1 overflow-hidden bg-neutral-950"
             }
           >
-            {renderView()}
+            <CurrentView />
           </main>
         </div>
       </div>
       <AddBookmarkDialog />
       <ClipboardMonitor />
       <AlertDialog
-        open={!!pendingBrowserDownload && guestOcclusionReady}
+        open={!!pendingDownload && guestOcclusionReady}
         onOpenChange={(open) => {
-          if (!open) {
-            setPendingBrowserDownload(null);
-            setBrowserDownloadDebridSupported(false);
-          }
+          if (!open) setPendingDownload(null);
         }}
       >
         <AlertDialogContent
           size="sm"
           className="w-fit min-w-[24rem] max-w-[min(30rem,calc(100vw-2rem))] overflow-hidden border border-neutral-700 bg-neutral-900 p-0 text-neutral-100 shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
         >
-          <div className="border-b border-neutral-800 bg-linear-to-r from-neutral-900 via-neutral-950 to-neutral-900 px-5 py-4">
+          <div className="border-b border-neutral-800 px-5 py-4">
             <AlertDialogHeader className="place-items-start text-left">
               <AlertDialogTitle className="text-base font-semibold text-neutral-50">
-                {isTorrentFileRequest ? "Start Torrent Download?" : "Start Download?"}
+                {isTorrent ? "Start torrent download?" : "Start download?"}
               </AlertDialogTitle>
               <AlertDialogDescription className="max-w-none text-sm leading-6 text-neutral-400">
-              {pendingBrowserDownload
-                ? isTorrentFileRequest
-                  ? `Do you want Limbo to fetch ${pendingBrowserDownload.filename} and start the actual torrent download?`
-                  : `Do you want to download ${pendingBrowserDownload.filename} from the browser?`
-                : "Do you want to start this download?"}
+                {isTorrent
+                  ? `Limbo will fetch ${pendingDownload?.filename} and start the torrent it points to.`
+                  : `Download ${pendingDownload?.filename} from the browser?`}
               </AlertDialogDescription>
             </AlertDialogHeader>
           </div>
           <AlertDialogFooter className="flex flex-row justify-end gap-2 border-t border-neutral-800 bg-neutral-950 px-5 py-4">
-            {settings?.debrid?.service && settings?.debrid?.apiKey && browserDownloadDebridSupported ? (
+            {offerDebrid ? (
               <AlertDialogAction
                 size="default"
                 className="shrink-0 px-4"
-                onClick={() => handleBrowserDownloadChoice(true)}
+                onClick={() => startPendingDownload(true)}
               >
                 <CloudDownload className="size-4" />
                 Download via Debrid
@@ -297,25 +156,14 @@ export function App() {
             ) : null}
             <AlertDialogAction
               size="default"
-              variant={
-                settings?.debrid?.service && settings?.debrid?.apiKey && browserDownloadDebridSupported
-                  ? "outline"
-                  : "default"
-              }
+              variant={offerDebrid ? "outline" : "default"}
               className="shrink-0 px-5"
-              onClick={() => handleBrowserDownloadChoice(false)}
+              onClick={() => startPendingDownload(false)}
             >
-              {isTorrentFileRequest ? <FileArchive className="size-4" /> : <HardDriveDownload className="size-4" />}
-              {isTorrentFileRequest ? "Start Torrent Download" : "Download Normally"}
+              {isTorrent ? <FileArchive className="size-4" /> : <HardDriveDownload className="size-4" />}
+              {isTorrent ? "Start torrent" : "Download"}
             </AlertDialogAction>
-            <AlertDialogCancel
-              size="default"
-              className="shrink-0 px-5"
-              onClick={() => {
-                setPendingBrowserDownload(null);
-                setBrowserDownloadDebridSupported(false);
-              }}
-            >
+            <AlertDialogCancel size="default" className="shrink-0 px-5">
               Cancel
             </AlertDialogCancel>
           </AlertDialogFooter>
@@ -324,5 +172,3 @@ export function App() {
     </>
   );
 }
-
-export default App;
