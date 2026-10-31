@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { commands, type Settings } from "@/lib/bindings";
 import { useAppStore } from "@/store/app-store";
+import { NetworkDevices } from "./network-devices";
 import { Row, Section, ToggleRow } from "./section";
 
 const DEFAULT_API_PORT = 17890;
@@ -55,7 +56,7 @@ export function TorrentSection({
       />
       <ToggleRow
         title="Companion API"
-        description="Let companion apps manage Limbo torrents over localhost."
+        description="Let companion apps like Raffi add and stream Limbo torrents."
         checked={settings.apiEnabled}
         onChange={(apiEnabled) => update({ apiEnabled })}
       />
@@ -101,6 +102,7 @@ export function TorrentSection({
               onChange={(ask) => update({ apiPromptPolicy: ask ? "always" : "off" })}
             />
           </div>
+          <NetworkDevices settings={settings} update={update} />
           {settings.trustedApiClients.length > 0 && (
             <div className="border-t border-neutral-800 pt-4">
               <p className="font-medium">Trusted apps</p>

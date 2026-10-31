@@ -165,7 +165,7 @@ fn start_app_services(app: Arc<AppState>) {
 
     runtime.spawn(async move {
         match ApiServer::start(app, data_dir).await {
-            Ok(Some(port)) => tracing::info!("companion API listening on 127.0.0.1:{port}"),
+            Ok(Some(port)) => tracing::info!("companion API listening on port {port}"),
             Ok(None) => tracing::info!("companion API disabled"),
             Err(error) => tracing::error!("companion API failed: {error}"),
         }

@@ -3,6 +3,7 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::api::approval::{ApprovalExpired, TorrentApprovalRequest};
+use crate::api::pairing::DeviceSummary;
 use crate::store::schema::{Download, LibraryItem, TorrentInfo};
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -19,6 +20,7 @@ pub const CLIPBOARD_LINKS: BridgeEvent<Vec<String>> = BridgeEvent::new("clipboar
 pub const APPROVAL_REQUESTED: BridgeEvent<TorrentApprovalRequest> =
     BridgeEvent::new("approval.requested");
 pub const APPROVAL_EXPIRED: BridgeEvent<ApprovalExpired> = BridgeEvent::new("approval.expired");
+pub const DEVICES_UPDATED: BridgeEvent<Vec<DeviceSummary>> = BridgeEvent::new("devices.updated");
 
 pub fn declare(window: SabineWindow) -> SabineWindow {
     window
@@ -30,4 +32,5 @@ pub fn declare(window: SabineWindow) -> SabineWindow {
         .bridge_event(&CLIPBOARD_LINKS)
         .bridge_event(&APPROVAL_REQUESTED)
         .bridge_event(&APPROVAL_EXPIRED)
+        .bridge_event(&DEVICES_UPDATED)
 }

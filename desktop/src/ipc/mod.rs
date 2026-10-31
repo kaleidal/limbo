@@ -1,6 +1,7 @@
 mod app;
 mod bookmarks;
 mod debrid;
+mod devices;
 mod downloads;
 mod library;
 mod settings;
@@ -74,6 +75,7 @@ pub fn attach(window: SabineWindow, app: Arc<AppState>) -> SabineWindow {
         torrents::attach,
         settings::attach,
         debrid::attach,
+        devices::attach,
     ]
     .into_iter()
     .fold(window, |window, attach| attach(window, &app))

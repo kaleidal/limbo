@@ -85,8 +85,9 @@ pub async fn stream_torrent(
 }
 
 fn check_stream_auth(state: &ApiState, headers: &HeaderMap, query_token: Option<&str>) -> bool {
-    check_auth(headers, state)
-        || query_token.is_some_and(|candidate| state.app.api.token_matches(candidate))
+    check_auth(headers, state).is_some()
+        || query_token
+            .is_some_and(|candidate| state.app.api.authorize(&state.app, candidate).is_some())
 }
 
 struct ByteRange {

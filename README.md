@@ -113,6 +113,17 @@ The v2 API accepts cross-origin requests from any companion app. Health is publi
 
 Toggle the API, configure approval prompts, revoke trusted apps, or rotate the access token under Settings → Torrent Settings → Companion API.
 
+### Devices on your network
+
+Turn on **Devices on your network** under Companion API to let other devices, such as Raffi on a TV, stream from Limbo. Limbo then listens on every network interface instead of only `127.0.0.1`, and announces itself over mDNS as `_limbo._tcp`, with its instance ID in the `id` TXT record and the API version in `api`. Allow incoming TCP connections on the API port, and UDP port 5353 for discovery, in your firewall.
+
+A device pairs once with a six-digit code. Choose **Pair** in Limbo's settings to show a code, valid for five minutes and five attempts, and enter it on the device:
+
+- Pair: `POST /v1/pair` with `{ "code": "123456", "deviceName": "Living Room TV" }` returns `{ deviceId, token, instanceId, name }`
+- Unpair: `DELETE /v1/pair` with the device's `Authorization: Bearer <token>`
+
+A device token works everywhere the access token does, and torrents a paired device adds skip the approval prompt. Stream URLs in torrent status use the address and token the request came in with, so they work from the device that asked. Remove a device from the list under Companion API to revoke its token.
+
 ## Associations
 
 Packaged builds register support for:

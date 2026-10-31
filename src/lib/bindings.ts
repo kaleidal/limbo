@@ -46,6 +46,12 @@ export const commands = {
 	debridUrlSupported: (params: {
 		url: string,
 	}, options?: InvokeOptions) => invoke<boolean>("debrid.urlSupported", params, options),
+	devicesList: (options?: InvokeOptions) => invoke<DeviceSummary[]>("devices.list", {}, options),
+	devicesStartPairing: (options?: InvokeOptions) => invoke<PairingCodeInfo>("devices.startPairing", {}, options),
+	devicesStopPairing: (options?: InvokeOptions) => invoke<null>("devices.stopPairing", {}, options),
+	devicesUnpair: (params: {
+		id: string,
+	}, options?: InvokeOptions) => invoke<null>("devices.unpair", params, options),
 	downloadsCancel: (params: {
 		id: string,
 	}, options?: InvokeOptions) => invoke<Download[]>("downloads.cancel", params, options),
@@ -90,6 +96,7 @@ export const commands = {
 		autoExtract: boolean,
 		deleteArchiveAfterExtract: boolean,
 		apiEnabled: boolean,
+		apiLanEnabled: boolean,
 		apiPort: number,
 		apiToken: string,
 		apiPromptPolicy: ApiPromptPolicy,
@@ -124,6 +131,7 @@ export const events = {
 	approvalExpired: (callback: (payload: ApprovalExpired) => void) => listen<ApprovalExpired>("approval.expired", callback),
 	approvalRequested: (callback: (payload: TorrentApprovalRequest) => void) => listen<TorrentApprovalRequest>("approval.requested", callback),
 	clipboardLinks: (callback: (payload: string[]) => void) => listen<string[]>("clipboard.links", callback),
+	devicesUpdated: (callback: (payload: DeviceSummary[]) => void) => listen<DeviceSummary[]>("devices.updated", callback),
 	downloadRemoved: (callback: (payload: Removed) => void) => listen<Removed>("download.removed", callback),
 	downloadUpdated: (callback: (payload: Download) => void) => listen<Download>("download.updated", callback),
 	libraryUpdated: (callback: (payload: LibraryItem[]) => void) => listen<LibraryItem[]>("library.updated", callback),
@@ -162,6 +170,12 @@ export type DebridSettings = {
 	clientSecret?: string,
 };
 
+export type DeviceSummary = {
+	id: string,
+	name: string,
+	pairedAt: string,
+};
+
 export type Download = {
 	id: string,
 	filename: string,
@@ -189,6 +203,11 @@ export type LibraryItem = {
 	dateAdded: string,
 };
 
+export type PairingCodeInfo = {
+	code: string,
+	expiresInSeconds: number,
+};
+
 export type PeerIdentityMethod = "tcp-peer" | "unknown";
 
 export type RdDevicePoll = { status: "idle" } | { status: "pending" } | { status: "expired"; error: string } | { status: "error"; error: string } | { status: "linked" };
@@ -214,6 +233,7 @@ export type Settings = {
 	autoExtract: boolean,
 	deleteArchiveAfterExtract: boolean,
 	apiEnabled: boolean,
+	apiLanEnabled: boolean,
 	apiPort: number,
 	apiToken: string,
 	apiPromptPolicy: ApiPromptPolicy,

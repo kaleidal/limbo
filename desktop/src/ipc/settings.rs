@@ -37,9 +37,15 @@ pub fn attach(window: SabineWindow, app: &App) -> SabineWindow {
                 })
                 .map_err(fail)?;
             app.set_clipboard_monitoring(settings.clipboard_monitoring);
-            if (previous.api_enabled, previous.api_port)
-                != (settings.api_enabled, settings.api_port)
-            {
+            if (
+                previous.api_enabled,
+                previous.api_lan_enabled,
+                previous.api_port,
+            ) != (
+                settings.api_enabled,
+                settings.api_lan_enabled,
+                settings.api_port,
+            ) {
                 ApiServer::reconfigure(app.clone()).await.map_err(fail)?;
             }
             if previous.max_concurrent_downloads != settings.max_concurrent_downloads {
@@ -78,6 +84,7 @@ pub fn attach(window: SabineWindow, app: &App) -> SabineWindow {
                     data.torrents.clear();
                     data.library.clear();
                     data.extracted_archives.clear();
+                    data.paired_devices.clear();
                     data.settings = Settings {
                         download_path: data.settings.download_path.clone(),
                         ..Settings::default()

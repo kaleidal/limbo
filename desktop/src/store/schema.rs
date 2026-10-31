@@ -168,6 +168,7 @@ pub struct Settings {
     pub auto_extract: bool,
     pub delete_archive_after_extract: bool,
     pub api_enabled: bool,
+    pub api_lan_enabled: bool,
     pub api_port: u16,
     pub api_token: String,
     pub api_prompt_policy: ApiPromptPolicy,
@@ -176,6 +177,15 @@ pub struct Settings {
 }
 
 pub const DEFAULT_API_PORT: u16 = 17890;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedDevice {
+    pub id: String,
+    pub name: String,
+    pub token: String,
+    pub paired_at: String,
+}
 
 fn default_download_path() -> String {
     directories::UserDirs::new()
@@ -196,6 +206,7 @@ impl Default for Settings {
             auto_extract: true,
             delete_archive_after_extract: false,
             api_enabled: true,
+            api_lan_enabled: false,
             api_port: DEFAULT_API_PORT,
             api_token: String::new(),
             api_prompt_policy: ApiPromptPolicy::default(),
@@ -213,6 +224,8 @@ pub struct StoreData {
     pub downloads: Vec<Download>,
     pub torrents: Vec<TorrentInfo>,
     pub extracted_archives: Vec<String>,
+    pub paired_devices: Vec<PairedDevice>,
+    pub instance_id: String,
     pub settings: Settings,
 }
 
@@ -233,6 +246,8 @@ impl Default for StoreData {
             downloads: Vec::new(),
             torrents: Vec::new(),
             extracted_archives: Vec::new(),
+            paired_devices: Vec::new(),
+            instance_id: uuid::Uuid::new_v4().to_string(),
             settings: Settings::default(),
         }
     }

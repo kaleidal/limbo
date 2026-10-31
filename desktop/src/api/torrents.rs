@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::approval::{ApprovalOutcome, TorrentApprovalInput};
-use super::{ApiState, check_auth, unauthorized};
+use super::{ApiState, Caller, Identity, check_auth, unauthorized};
 use crate::os::vpn;
 use crate::store::schema::{TorrentInfo, TorrentStatus};
 use crate::torrent::{CompanionTorrentOptions, TorrentError, TorrentFile};
@@ -81,15 +81,15 @@ pub struct ApiTorrentStatus {
 }
 
 pub async fn list_torrents(State(state): State<ApiState>, headers: HeaderMap) -> Response {
-    if !check_auth(&headers, &state) {
+    let Some(caller) = check_auth(&headers, &state) else {
         return unauthorized();
-    }
+    };
     let statuses = state
         .app
         .torrent_engine
         .list(&state.app)
         .into_iter()
-        .filter_map(|torrent| status_for(&state, torrent).ok())
+        .filter_map(|torrent| status_for(&state, &caller, torrent).ok())
         .collect::<Vec<_>>();
     Json(json!({ "torrents": statuses })).into_response()
 }
@@ -100,9 +100,9 @@ pub async fn add_torrent(
     headers: HeaderMap,
     Json(body): Json<AddTorrentBody>,
 ) -> Response {
-    if !check_auth(&headers, &state) {
+    let Some(caller) = check_auth(&headers, &state) else {
         return unauthorized();
-    }
+    };
     if !state.app.torrent_engine.is_ready() {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -133,24 +133,28 @@ pub async fn add_torrent(
         .clone()
         .or_else(|| crate::torrent::magnet_name(&magnet))
         .unwrap_or_else(|| "Torrent from companion app".to_string());
-    let approval = state
-        .app
-        .approvals
-        .request(
-            &state.app,
-            TorrentApprovalInput {
-                client_id: client_id.clone(),
-                client_name: client_name.clone(),
-                client_version: clean_text(body.client_version),
-                client_icon_data_url: clean_text(body.client_icon_data_url),
-                magnet: magnet.clone(),
-                display_name: display_name.clone(),
-                file_index: body.file_index,
-                sequential: body.sequential,
-                peer,
-            },
-        )
-        .await;
+    let approval = if matches!(caller.identity, Identity::Device(_)) {
+        ApprovalOutcome::Approved
+    } else {
+        state
+            .app
+            .approvals
+            .request(
+                &state.app,
+                TorrentApprovalInput {
+                    client_id: client_id.clone(),
+                    client_name: client_name.clone(),
+                    client_version: clean_text(body.client_version),
+                    client_icon_data_url: clean_text(body.client_icon_data_url),
+                    magnet: magnet.clone(),
+                    display_name: display_name.clone(),
+                    file_index: body.file_index,
+                    sequential: body.sequential,
+                    peer,
+                },
+            )
+            .await
+    };
     match approval {
         ApprovalOutcome::Denied => {
             return error(
@@ -235,7 +239,7 @@ pub async fn add_torrent(
             }
         }
     }
-    match status_for(&state, torrent) {
+    match status_for(&state, &caller, torrent) {
         Ok(status) => (StatusCode::CREATED, Json(status)).into_response(),
         Err(error_value) => torrent_error(error_value),
     }
@@ -246,14 +250,14 @@ pub async fn get_torrent(
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    if !check_auth(&headers, &state) {
+    let Some(caller) = check_auth(&headers, &state) else {
         return unauthorized();
-    }
+    };
     let torrent = match state.app.torrent_engine.get(&state.app, &id) {
         Ok(torrent) => torrent,
         Err(error_value) => return torrent_error(error_value),
     };
-    match status_for(&state, torrent) {
+    match status_for(&state, &caller, torrent) {
         Ok(status) => Json(status).into_response(),
         Err(error_value) => torrent_error(error_value),
     }
@@ -265,7 +269,7 @@ pub async fn remove_torrent(
     AxumPath(id): AxumPath<String>,
     Query(query): Query<RemoveTorrentQuery>,
 ) -> Response {
-    if !check_auth(&headers, &state) {
+    if check_auth(&headers, &state).is_none() {
         return unauthorized();
     }
     match state
@@ -279,8 +283,9 @@ pub async fn remove_torrent(
     }
 }
 
-pub fn status_for(
+pub(super) fn status_for(
     state: &ApiState,
+    caller: &Caller,
     torrent: TorrentInfo,
 ) -> Result<ApiTorrentStatus, TorrentError> {
     let files = state.app.torrent_engine.list_files(&torrent.id)?;
@@ -332,8 +337,7 @@ pub fn status_for(
     } else {
         "downloading"
     };
-    let stream_url =
-        selected_file_index.and_then(|index| state.app.api.stream_url(&torrent.id, index));
+    let stream_url = selected_file_index.and_then(|index| caller.stream_url(&torrent.id, index));
     Ok(ApiTorrentStatus {
         id: torrent.id,
         info_hash: Some(torrent.info_hash).filter(|hash| !hash.is_empty()),
