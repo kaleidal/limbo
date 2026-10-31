@@ -4313,8 +4313,8 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sabine"
-version = "0.61.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.61#61ce5ded992edf1ceef149a6ce9bbfbcc38eed03"
+version = "0.62.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.62#9bf0e62d32c8c0d136137c7a7fce21b898961006"
 dependencies = [
  "base64",
  "block2",
@@ -4376,8 +4376,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-bridge"
-version = "0.61.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.61#61ce5ded992edf1ceef149a6ce9bbfbcc38eed03"
+version = "0.62.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.62#9bf0e62d32c8c0d136137c7a7fce21b898961006"
 dependencies = [
  "serde",
  "serde_json",
@@ -4388,8 +4388,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-host"
-version = "0.61.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.61#61ce5ded992edf1ceef149a6ce9bbfbcc38eed03"
+version = "0.62.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.62#9bf0e62d32c8c0d136137c7a7fce21b898961006"
 dependencies = [
  "sabine-bridge",
  "sabine-runtime",
@@ -4400,8 +4400,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-platform"
-version = "0.61.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.61#61ce5ded992edf1ceef149a6ce9bbfbcc38eed03"
+version = "0.62.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.62#9bf0e62d32c8c0d136137c7a7fce21b898961006"
 dependencies = [
  "block2",
  "futures-util",
@@ -4420,8 +4420,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-runtime"
-version = "0.61.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.61#61ce5ded992edf1ceef149a6ce9bbfbcc38eed03"
+version = "0.62.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.62#9bf0e62d32c8c0d136137c7a7fce21b898961006"
 dependencies = [
  "bzip2",
  "libc",
@@ -4437,8 +4437,8 @@ dependencies = [
 
 [[package]]
 name = "sabine-service"
-version = "0.61.0"
-source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.61#61ce5ded992edf1ceef149a6ce9bbfbcc38eed03"
+version = "0.62.0"
+source = "git+https://github.com/Lantharos/Sabine.git?tag=v0.62#9bf0e62d32c8c0d136137c7a7fce21b898961006"
 dependencies = [
  "base64",
  "clap",
@@ -5135,7 +5135,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

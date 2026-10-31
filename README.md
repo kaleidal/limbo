@@ -51,7 +51,7 @@ Limbo installs and maintains its shared Sabine Chromium runtime on first launch,
 Install the matching Sabine tools:
 
 ```bash
-cargo install --git https://github.com/Lantharos/Sabine --tag v0.61 sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.62 sabine-cli
 ```
 
 ### Install
