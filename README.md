@@ -30,11 +30,11 @@ Users are solely responsible for ensuring they have the legal right to access, d
 
 ## Download
 
-Download the latest Limbo release from [GitHub Releases](https://github.com/kaleidal/limbo/releases/latest). Packages are available for Windows and Linux on x86-64 and ARM64, and for Apple silicon Macs.
+Download Limbo from [Schelf](https://schelf.store/apps/al.kaleid.limbo), where it also updates from. Packages are available for Windows and Linux on x86-64 and ARM64, and for Apple silicon Macs.
 
 The public website is [limbo.kaleid.al](https://limbo.kaleid.al). Its download buttons open the latest installer directly. Stable download links are `/download/windows`, `/download/macos`, and `/download/linux`; macOS requires Apple silicon.
 
-Deploy the website with `bun run deploy:marketing`. Download routes resolve the latest published updater manifest, cached for one minute, so new app releases do not require a website deployment.
+Deploy the website with `bun run deploy:marketing`. Download routes redirect to Schelf's latest release, so new app releases do not require a website deployment.
 
 These initial packages are not yet signed with Apple or Microsoft developer certificates. Windows may show a SmartScreen warning. On macOS, allow Limbo from **System Settings → Privacy & Security** after the first launch attempt. Linux packages do not require an application-signing certificate.
 
@@ -51,7 +51,7 @@ Limbo installs and maintains its shared Sabine Chromium runtime on first launch,
 Install the matching Sabine tools:
 
 ```bash
-cargo install --git https://github.com/Lantharos/Sabine --tag v0.62 sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.78 sabine-cli
 ```
 
 ### Install

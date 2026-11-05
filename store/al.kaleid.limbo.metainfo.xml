@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>al.kaleid.limbo</id>
+  <name>Limbo</name>
+  <summary>Downloads, torrents and Debrid in one place, with a built-in browser and a library</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="al.kaleid">
+    <name>Kaleidal</name>
+  </developer>
+  <description>
+    <p>Limbo brings everything you download into one app. Paste a link or a magnet, or open a .torrent file, and it queues, resumes and finishes the transfer for you.</p>
+    <ul>
+      <li>Direct downloads with a queue, resume and a limit on how many run at once</li>
+      <li>Torrents from magnet links and .torrent files, with optional seeding</li>
+      <li>Real-Debrid, AllDebrid, Premiumize and TorBox</li>
+      <li>Automatic extraction of zip, 7z and rar archives, including multi-part sets</li>
+      <li>A built-in browser with bookmarks and popup blocking</li>
+      <li>A library that collects finished downloads alongside folders you add</li>
+    </ul>
+    <p>You're responsible for having the right to download what you use Limbo for.</p>
+  </description>
+  <categories>
+    <category>Network</category>
+    <category>FileTransfer</category>
+    <category>P2P</category>
+  </categories>
+  <keywords>
+    <keyword>torrent</keyword>
+    <keyword>download</keyword>
+    <keyword>magnet</keyword>
+    <keyword>debrid</keyword>
+    <keyword>bittorrent</keyword>
+  </keywords>
+  <url type="homepage">https://limbo.kaleid.al</url>
+  <url type="bugtracker">https://github.com/kaleidal/limbo/issues</url>
+  <url type="vcs-browser">https://github.com/kaleidal/limbo</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Downloads and torrents</caption>
+      <image>store/screenshots/downloads.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Your library</caption>
+      <image>store/screenshots/library.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.6.0" date="2026-11-05" />
+  </releases>
+</component>

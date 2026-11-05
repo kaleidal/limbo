@@ -1,0 +1,67 @@
+name: Hand over to Schelf
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Publish to Schelf run whose builds to offer on GitHub
+        required: true
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      SABINE_UPDATE_SIGNING_KEY: ${{ secrets.SABINE_UPDATE_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Sign for the copies that still update from GitHub
+        run: |
+          sed -i 's|^provider = "schelf"|provider = "github"\nrepository = "kaleidal/limbo"\npublic_key = "o1pDFQMTOdCASk1SfVCv1J5e7IOEctN2hDCpgTseMxk="|' Sabine.toml
+      - run: rustup toolchain install 1.99 --profile minimal
+      - run: rustup override set 1.99
+      - name: Install CLI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libfontconfig1-dev libwayland-dev libxkbcommon-dev
+      - name: Install matching Sabine CLI
+        run: cargo install --git https://github.com/Lantharos/Sabine --tag v0.78 --locked sabine-cli
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Generate updater manifest
+        shell: pwsh
+        run: |
+          $arguments = @()
+          Get-ChildItem release -Directory | ForEach-Object {
+            $artifact = Get-ChildItem $_.FullName -File | Where-Object Extension -ne '.executable' | Select-Object -First 1
+            $arguments += "--artifact"
+            $arguments += "$($_.Name)=$($artifact.FullName)"
+            $executable = Join-Path $_.FullName "$($_.Name).executable"
+            if (Test-Path $executable) {
+              $arguments += "--executable"
+              $arguments += "$($_.Name)=$((Get-Content $executable -Raw).Trim())"
+            }
+          }
+          sabine release-manifest . --output release/sabine-update.json @arguments
+      - name: Flatten release assets
+        shell: pwsh
+        run: |
+          Get-ChildItem release -Directory | ForEach-Object {
+            Get-ChildItem $_.FullName -File -Filter *.executable | Remove-Item
+            Get-ChildItem $_.FullName -File | Move-Item -Destination release
+            Remove-Item $_.FullName
+          }
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes release/*
+          gh release edit "$GITHUB_REF_NAME" --draft=false

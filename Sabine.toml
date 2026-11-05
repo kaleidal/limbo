@@ -3,9 +3,10 @@ id = "al.kaleid.limbo"
 name = "Limbo"
 publisher = "Kaleidal"
 maintainer = "Kaleidal <hello@kaleid.al>"
-version = "1.5.1"
+version = "1.6.0"
 icon = "public/icon.png"
 cargo_manifest = "desktop/Cargo.toml"
+description = "Limbo keeps your downloads in one place: direct links, torrents and Debrid services, a built-in browser, automatic archive extraction, and a library of everything you finish."
 generic_name = "Download Manager"
 categories = ["Network", "FileTransfer", "P2P"]
 keywords = ["torrent", "download", "magnet", "debrid", "bittorrent"]
@@ -26,8 +27,6 @@ unsandboxed = true
 reason = "It saves downloads to and opens files from any folder or drive you choose, and accepts torrent peers on your network."
 
 [updates]
-provider = "github"
-repository = "kaleidal/limbo"
+provider = "schelf"
 channel = "stable"
 policy = "automatic"
-public_key = "o1pDFQMTOdCASk1SfVCv1J5e7IOEctN2hDCpgTseMxk="
