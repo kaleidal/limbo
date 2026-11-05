@@ -5,5 +5,5 @@
     "types": [],
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.marketing-worker.tsbuildinfo"
   },
-  "include": ["marketing/worker", "node_modules/.tmp/limbo-worker.d.ts"]
+  "include": ["marketing/worker", ".cloudflare/types/index.d.ts"]
 }

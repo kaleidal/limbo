@@ -12,6 +12,7 @@ dist
 web-dist
 marketing-dist
 .wrangler
+.cloudflare
 dist-ssr
 *.local
 
