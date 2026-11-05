@@ -20,7 +20,7 @@
     "dev:desktop": "sabine dev .",
     "build:desktop": "bun run build && cargo build --manifest-path desktop/Cargo.toml --release",
     "bundle:desktop": "sabine bundle . --release",
-    "check:marketing-worker": "wrangler types node_modules/.tmp/limbo-worker.d.ts && tsc -p tsconfig.marketing-worker.json"
+    "check:marketing-worker": "mkdir -p node_modules/.tmp && wrangler types node_modules/.tmp/limbo-worker.d.ts && tsc -p tsconfig.marketing-worker.json"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
