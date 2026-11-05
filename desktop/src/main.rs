@@ -37,9 +37,7 @@ fn main() {
         move |window| configure_window(window, &configured_app),
         move |process| {
             if let Some(app) = launched_app.lock().clone() {
-                if let Some(emitter) = process.bridge_event_emitter() {
-                    app.set_bridge_emitter(emitter);
-                }
+                app.set_bridge_emitter(process.bridge_event_emitter());
                 app.set_process_handle(process.handle());
                 start_app_services(app);
             }

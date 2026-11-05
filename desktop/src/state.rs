@@ -97,11 +97,11 @@ impl AppState {
 
     pub fn quit(&self) -> Result<(), crate::store::StoreError> {
         self.store.save()?;
-        let emitter = self.emitter.read().clone();
+        let process = self.process_handle.read().clone();
         self.runtime.spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            if let Some(emitter) = emitter {
-                emitter.quit();
+            if let Some(process) = process {
+                process.quit();
             }
         });
         Ok(())

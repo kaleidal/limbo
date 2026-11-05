@@ -7,7 +7,7 @@
       "dependencies": {
         "@base-ui/react": "^1.9.0",
         "@fontsource-variable/mona-sans": "^5.3.0",
-        "@lantharos/sabine": "github:Lantharos/Sabine#v0.62",
+        "@lantharos/sabine": "github:Lantharos/Sabine#v0.78",
         "@tailwindcss/vite": "^4.3.3",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
@@ -253,7 +253,7 @@
 
     "@keyv/serialize": ["@keyv/serialize@1.1.1", "", {}, "sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA=="],
 
-    "@lantharos/sabine": ["@lantharos/sabine@github:Lantharos/Sabine#84a6ebc", {}, "Lantharos-Sabine-84a6ebc", "sha512-hjw2T+eJWos7WeFClkPxzNB3qEonm1XQIe9qBCL5VdiMGE7egsDgZx5QDWq93rLw7EgccLQxaRHAi/etdluvpg=="],
+    "@lantharos/sabine": ["@lantharos/sabine@github:Lantharos/Sabine#21ffabe", {}, "Lantharos-Sabine-21ffabe", "sha512-eegLHCEoUaTDzi07tzIgeqMVsTSf06u2XRLwv2vUFf5xBqCHJN5D8aU1IlnJiOMHitG8pDCJhd51CGP4DtZSbA=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.156.0", "", {}, "sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw=="],
 

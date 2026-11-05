@@ -51,6 +51,13 @@ pub fn attach(window: SabineWindow, app: &App) -> SabineWindow {
             if previous.max_concurrent_downloads != settings.max_concurrent_downloads {
                 app.download_manager.fill_slots(&app);
             }
+            if previous.start_on_boot != settings.start_on_boot
+                && let Some(process) = app.process_handle().await
+            {
+                process
+                    .set_autostart(settings.start_on_boot)
+                    .map_err(fail)?;
+            }
             Ok(settings)
         },
     );
